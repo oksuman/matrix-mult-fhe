@@ -15,6 +15,10 @@ set(TEST_SOURCES
     mult_newCol_test.cpp
 
     inverse_diagonal_test.cpp
+    inverse_jkls18_test.cpp
+    inverse_rt22_test.cpp
+    inverse_newCol_test.cpp
+    inverse_newRow_test.cpp
 )
 
 # Add each test executable

@@ -1,6 +1,7 @@
 
 #pragma once
 
+#include "encryption.h"
 #include "rotation.h"
 #include <memory>
 #include <openfhe.h>
@@ -167,8 +168,8 @@ template <int d> class TestMatrixOperation : public MatrixOperationBase<d> {
     }
 };
 
-// Secure Outsourced Matrix Computation and Application to Neural Networks, CCS
-// 2018
+// Secure Outsourced Matrix Computation and Application to Neural Networks,
+// CCS 2018
 template <int d> class MatrixMult_JKLS18 : public MatrixOperationBase<d> {
   protected:
     using MatrixOperationBase<d>::rot;
@@ -556,33 +557,96 @@ template <int d> class MatrixMult_newCol : public MatrixOperationBase<d> {
         max_batch = this->m_cc->GetRingDimension() / 2;
         s = std::min(max_batch / d / d, d);
         B = d / s;
-        /*
-            This configuration is only for single multiplication,
-            where N=1<<14, and max_batch=1<<13
-        */
-        switch (d) {
-        case 4:
-            this->ng = 2;
-            this->nb = 2;
-            break;
-        case 8:
-            this->ng = 2;
-            this->nb = 4;
-            break;
-        case 16:
-            this->ng = 4;
-            this->nb = 4;
-            break;
-        case 32:
-            this->ng = 2;
-            this->nb = 16;
-            break;
-        case 64:
-            this->ng = 1;
-            this->nb = 64;
-            break;
-        default:
-            break;
+        if (max_batch == 1 << 13) {
+            /*
+                This configuration is only for single multiplication,
+                where N=1<<14, and max_batch=1<<13
+            */
+            switch (d) {
+            case 4:
+                this->ng = 2;
+                this->nb = 2;
+                break;
+            case 8:
+                this->ng = 2;
+                this->nb = 4;
+                break;
+            case 16:
+                this->ng = 4;
+                this->nb = 4;
+                break;
+            case 32:
+                this->ng = 2;
+                this->nb = 16;
+                break;
+            case 64:
+                this->ng = 1;
+                this->nb = 64;
+                break;
+            default:
+                break;
+            }
+        } else if (max_batch == 1 << 15) {
+            /*
+                This configuration is only for 10 multiplication,
+                where N=1<<16, and max_batch=1<<15
+            */
+            switch (d) {
+            case 4:
+                this->ng = 2;
+                this->nb = 2;
+                break;
+            case 8:
+                this->ng = 2;
+                this->nb = 4;
+                break;
+            case 16:
+                this->ng = 4;
+                this->nb = 4;
+                break;
+            case 32:
+                this->ng = 4;
+                this->nb = 8;
+                break;
+            case 64:
+                this->ng = 2;
+                this->nb = 32;
+                break;
+            default:
+                break;
+            }
+        } else if (max_batch == 1 << 16) {
+            /*
+                This configuration is only for 10 multiplication,
+                where N=1<<17, and max_batch=1<<16
+            */
+            switch (d) {
+            case 4:
+                this->ng = 2;
+                this->nb = 2;
+                break;
+            case 8:
+                this->ng = 2;
+                this->nb = 4;
+                break;
+            case 16:
+                this->ng = 4;
+                this->nb = 4;
+                break;
+            case 32:
+                this->ng = 4;
+                this->nb = 8;
+                break;
+            case 64:
+                this->ng = 4;
+                this->nb = 16;
+                break;
+            default:
+                break;
+            }
+        } else {
+            this->ng = -1;
+            this->nb = -1;
         }
     }
     std::vector<double> generateMaskVector(int batch_size, int k) {
@@ -681,7 +745,6 @@ template <int d> class MatrixMult_newCol : public MatrixOperationBase<d> {
 
             auto diagA = this->getZero()->Clone();
             for (int k = -ng; k < ng; k++) {
-                // rotation 함수 통일되면 if-else 합치기 가능
                 if (k < 0) {
                     auto tmp = this->getZero()->Clone();
                     auto babyStep = (k == -ng) ? 1 : 0;

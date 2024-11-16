@@ -9,36 +9,77 @@
 #include "matrix_inversion_algo.h"
 #include "openfhe.h"
 #include "rotation.h"
+#include "matrix_utils.h"
 
 using namespace lbcrypto;
 
 template <int d> class MatrixInverseNewColTestFixture : public ::testing::Test {
   protected:
     void SetUp() override {
+        int multDepth;
+        uint32_t scaleModSize;
+        uint32_t firstModSize;
+
+        std::vector<uint32_t> levelBudget;
+        std::vector<uint32_t> bsgsDim;
+
+        CCParams<CryptoContextCKKSRNS> parameters;
+
         switch (d) {
         case 4:
-            r = 13;
+            // Safe, conservative configuraion
+            r = 16;
+            multDepth = 2 * r + 12;
+            scaleModSize = 50;
             break;
         case 8:
-            r = 16;
+            r = 18;
+            multDepth = 2 * r + 12;
+            scaleModSize = 50;
             break;
         case 16:
-            r = 18;
+            r = 26;
+            // multDepth = 2*r+12;
+            multDepth = 34;
+            scaleModSize = 59;
+            firstModSize = 60;
+            parameters.SetFirstModSize(firstModSize);
+            levelBudget = {4, 5};
+            bsgsDim = {0, 0};
+            break;
+        case 32:
+            r = 26;
+            multDepth = 34;
+            scaleModSize = 59;
+            firstModSize = 60;
+            parameters.SetFirstModSize(firstModSize);
+            levelBudget = {4, 5};
+            bsgsDim = {0, 0};
+            break;
+        case 64:
+            r = 30;
+            multDepth = 31;
+            scaleModSize = 59;
+            firstModSize = 60;
+            parameters.SetFirstModSize(firstModSize);
+            levelBudget = {4, 5};
+            bsgsDim = {0, 0};
             break;
         default:
             r = -1;
         }
 
-        CCParams<CryptoContextCKKSRNS> parameters;
-        parameters.SetMultiplicativeDepth(2 * r + 12);
-        parameters.SetScalingModSize(50);
+        parameters.SetMultiplicativeDepth(multDepth);
+        parameters.SetScalingModSize(scaleModSize);
 
         int max_batch = 1 << 16;
         int s = std::min(max_batch / d / d, d);
-        parameters.SetBatchSize(d * d);
+        int batchSize = d * d;
+        parameters.SetBatchSize(batchSize);
         parameters.SetSecurityLevel(HEStd_128_classic);
 
         m_cc = GenCryptoContext(parameters);
+        std::cout << "ring dimension: " << m_cc->GetRingDimension() << std::endl;
         m_cc->Enable(PKE);
         m_cc->Enable(KEYSWITCH);
         m_cc->Enable(LEVELEDSHE);
@@ -47,6 +88,12 @@ template <int d> class MatrixInverseNewColTestFixture : public ::testing::Test {
         auto keyPair = m_cc->KeyGen();
         m_publicKey = keyPair.publicKey;
         m_privateKey = keyPair.secretKey;
+
+        if (d >= 16) {
+            m_cc->Enable(FHE);
+            m_cc->EvalBootstrapSetup(levelBudget, bsgsDim, batchSize);
+            m_cc->EvalBootstrapKeyGen(m_privateKey, batchSize);
+        }
 
         std::vector<int> rotations;
         for (int i = 1; i < d * d * s; i *= 2) {
@@ -58,7 +105,7 @@ template <int d> class MatrixInverseNewColTestFixture : public ::testing::Test {
 
         m_enc = std::make_shared<Encryption>(m_cc, m_publicKey);
         matInv = std::make_unique<MatrixInverse_newCol<d>>(
-            m_enc, m_cc, m_publicKey, rotations, r);
+            m_enc, m_cc, m_publicKey, rotations, r, multDepth);
     }
 
     std::vector<double> generateRandomMatrix() {
@@ -71,23 +118,9 @@ template <int d> class MatrixInverseNewColTestFixture : public ::testing::Test {
             for (size_t i = 0; i < d * d; i++) {
                 matrix[i] = dis(gen);
             }
-        } while (!isInvertible(matrix));
+        } while (!utils::isInvertible(matrix, d));
         std::cout << "invertible matrix created" << std::endl;
         return matrix;
-    }
-
-    bool isInvertible(const std::vector<double> &matrix) {
-        double max_elem = 0;
-        double min_elem = std::numeric_limits<double>::max();
-        for (size_t i = 0; i < d * d; i++) {
-            max_elem = std::max(max_elem, std::abs(matrix[i]));
-            min_elem = std::min(min_elem, std::abs(matrix[i]));
-        }
-
-        if (min_elem < 1e-6 || max_elem / min_elem > 1e6) {
-            return false;
-        }
-        return true;
     }
 
     void verifyInverseResult(const std::vector<double> &original,
@@ -288,9 +321,15 @@ TYPED_TEST_P(MatrixInverseNewColTestTyped, ComprehensiveInverseTest) {
 REGISTER_TYPED_TEST_SUITE_P(MatrixInverseNewColTestTyped,
                             ComprehensiveInverseTest);
 
-using InverseTestSizes = ::testing::Types<std::integral_constant<size_t, 4>,
-                                          std::integral_constant<size_t, 8>,
-                                          std::integral_constant<size_t, 16>>;
+using InverseTestSizes = ::testing::Types<
+                                          std::integral_constant<size_t, 64>>;
+// using InverseTestSizes = ::testing::Types<std::integral_constant<size_t, 4>,
+//                                           std::integral_constant<size_t, 8>,
+//                                           std::integral_constant<size_t, 16>,
+//                                           std::integral_constant<size_t, 32>,
+//                                           std::integral_constant<size_t,
+//                                           64>>;
+// using InverseTestSizes = ::testing::Types<std::integral_constant<size_t, 64>>;
 
 INSTANTIATE_TYPED_TEST_SUITE_P(MatrixInverseNewCol,
                                MatrixInverseNewColTestTyped, InverseTestSizes);

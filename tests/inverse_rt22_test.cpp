@@ -9,6 +9,7 @@
 #include "matrix_inversion_algo.h"
 #include "openfhe.h"
 #include "rotation.h"
+#include "matrix_utils.h"
 
 using namespace lbcrypto;
 
@@ -30,7 +31,8 @@ template <int d> class MatrixInverseRT22TestFixture : public ::testing::Test {
         }
 
         CCParams<CryptoContextCKKSRNS> parameters;
-        parameters.SetMultiplicativeDepth(2 * r + 12);
+        int multDepth = 31;
+        parameters.SetMultiplicativeDepth(multDepth);
         parameters.SetScalingModSize(50);
         parameters.SetBatchSize(d * d * d);
         parameters.SetSecurityLevel(HEStd_128_classic);
@@ -55,7 +57,7 @@ template <int d> class MatrixInverseRT22TestFixture : public ::testing::Test {
 
         m_enc = std::make_shared<Encryption>(m_cc, m_publicKey);
         matInv = std::make_unique<MatrixInverse_RT22<d>>(
-            m_enc, m_cc, m_publicKey, rotations, r);
+            m_enc, m_cc, m_publicKey, rotations, r, multDepth);
     }
 
     std::vector<double> generateRandomMatrix() {
@@ -68,23 +70,9 @@ template <int d> class MatrixInverseRT22TestFixture : public ::testing::Test {
             for (size_t i = 0; i < d * d; i++) {
                 matrix[i] = dis(gen);
             }
-        } while (!isInvertible(matrix));
+        } while (!utils::isInvertible(matrix, d));
 
         return matrix;
-    }
-
-    bool isInvertible(const std::vector<double> &matrix) {
-        double max_elem = 0;
-        double min_elem = std::numeric_limits<double>::max();
-        for (size_t i = 0; i < d * d; i++) {
-            max_elem = std::max(max_elem, std::abs(matrix[i]));
-            min_elem = std::min(min_elem, std::abs(matrix[i]));
-        }
-
-        if (min_elem < 1e-6 || max_elem / min_elem > 1e6) {
-            return false;
-        }
-        return true;
     }
 
     void verifyInverseResult(const std::vector<double> &original,

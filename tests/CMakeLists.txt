@@ -17,6 +17,7 @@ set(TEST_SOURCES
     inverse_diagonal_test.cpp
     inverse_jkls18_test.cpp
     inverse_rt22_test.cpp
+    inverse_as24_test.cpp
     inverse_newCol_test.cpp
     inverse_newRow_test.cpp
 )
@@ -33,6 +34,7 @@ foreach(test_source ${TEST_SOURCES})
     target_link_libraries(${test_name}
         PRIVATE
         matrix_operations
+        utils
         OPENFHEcore
         OPENFHEpke
         GTest::gtest

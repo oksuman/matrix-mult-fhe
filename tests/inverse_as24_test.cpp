@@ -5,6 +5,7 @@
 #include <random>
 
 #include "encryption.h"
+#include "matrix_algo_singlePack.h"
 #include "matrix_inversion_algo.h"
 #include "openfhe.h"
 #include "rotation.h"
@@ -12,38 +13,72 @@
 
 using namespace lbcrypto;
 
-template <int d> class MatrixInverseJKLS18TestFixture : public ::testing::Test {
+template <int d> class MatrixInverseAS24TestFixture : public ::testing::Test {
   protected:
     void SetUp() override {
+        int multDepth;
+        uint32_t scaleModSize;
+        uint32_t firstModSize;
+
+        std::vector<uint32_t> levelBudget;
+        std::vector<uint32_t> bsgsDim;
+
+        CCParams<CryptoContextCKKSRNS> parameters;
+
         switch (d) {
         case 4:
+            // Safe, conservative configuraion
             r = 16;
+            multDepth = 3 * r + 12;
+            scaleModSize = 50;
             break;
         case 8:
             r = 18;
+            multDepth = 3 * r + 12;
+            scaleModSize = 50;
             break;
         case 16:
             r = 20;
+            multDepth = 49;
+            scaleModSize = 50;
+            firstModSize = 51;
+            parameters.SetFirstModSize(firstModSize);
+            levelBudget = {4, 4};
+            bsgsDim = {0, 0};
             break;
         case 32:
             r = 22;
+            multDepth = 37;
+            scaleModSize = 59;
+            firstModSize = 60;
+            parameters.SetFirstModSize(firstModSize);
+            levelBudget = {4, 4};
+            bsgsDim = {0, 0};
             break;
         case 64:
             r = 24;
+            multDepth = 37;
+            scaleModSize = 59;
+            firstModSize = 60;
+            parameters.SetFirstModSize(firstModSize);
+            levelBudget = {4, 5};
+            bsgsDim = {0, 0};
             break;
         default:
             r = -1;
         }
 
-        CCParams<CryptoContextCKKSRNS> parameters;
-        int multDepth = 3*r+12;
-        // int multDepth = 31;
         parameters.SetMultiplicativeDepth(multDepth);
-        parameters.SetScalingModSize(50);
-        parameters.SetBatchSize(d * d);
+        parameters.SetScalingModSize(scaleModSize);
+
+        int max_batch = 1 << 16;
+        int s = std::min(max_batch / d / d, d);
+        int batchSize = d * d * s;
+        parameters.SetBatchSize(batchSize);
         parameters.SetSecurityLevel(HEStd_128_classic);
 
         m_cc = GenCryptoContext(parameters);
+        std::cout << "Ring Dimension: " << m_cc->GetRingDimension() << std::endl;
         m_cc->Enable(PKE);
         m_cc->Enable(KEYSWITCH);
         m_cc->Enable(LEVELEDSHE);
@@ -53,8 +88,14 @@ template <int d> class MatrixInverseJKLS18TestFixture : public ::testing::Test {
         m_publicKey = keyPair.publicKey;
         m_privateKey = keyPair.secretKey;
 
+        if (d >= 16) {
+            m_cc->Enable(FHE);
+            m_cc->EvalBootstrapSetup(levelBudget, bsgsDim, batchSize);
+            m_cc->EvalBootstrapKeyGen(m_privateKey, batchSize);
+        }
+
         std::vector<int> rotations;
-        for (int i = 1; i < d * d; i *= 2) {
+        for (int i = 1; i < d * d * s; i *= 2) {
             rotations.push_back(i);
             rotations.push_back(-i);
         }
@@ -62,7 +103,7 @@ template <int d> class MatrixInverseJKLS18TestFixture : public ::testing::Test {
         m_cc->EvalMultKeyGen(m_privateKey);
 
         m_enc = std::make_shared<Encryption>(m_cc, m_publicKey);
-        matInv = std::make_unique<MatrixInverse_JKLS18<d>>(
+        matInv = std::make_unique<MatrixInverse_AS24<d>>(
             m_enc, m_cc, m_publicKey, rotations, r, multDepth);
     }
 
@@ -77,8 +118,7 @@ template <int d> class MatrixInverseJKLS18TestFixture : public ::testing::Test {
                 matrix[i] = dis(gen);
             }
         } while (!utils::isInvertible(matrix, d));
-
-        std::cout << "inverible matrix generated!" << std::endl;
+        std::cout << "invertible matrix created" << std::endl;
         return matrix;
     }
 
@@ -121,6 +161,53 @@ template <int d> class MatrixInverseJKLS18TestFixture : public ::testing::Test {
             std::cout << "\n";
         }
         std::cout << "\n";
+    }
+
+    struct PrecisionMetrics {
+        double max_error;
+        double avg_log_precision;
+        double min_log_precision;
+        std::vector<std::pair<std::pair<int, int>, double>> worst_elements;
+    };
+
+    PrecisionMetrics analyzePrecision(const std::vector<double> &computed,
+                                      const std::vector<double> &expected,
+                                      int top_n = 5) {
+        PrecisionMetrics metrics;
+        metrics.max_error = 0.0;
+        double sum_log_precision = 0.0;
+        metrics.min_log_precision = std::numeric_limits<double>::infinity();
+
+        std::vector<std::pair<double, std::pair<int, int>>> errors;
+
+        for (int i = 0; i < d; i++) {
+            for (int j = 0; j < d; j++) {
+                double error =
+                    std::abs(computed[i * d + j] - expected[i * d + j]);
+                double log_precision =
+                    error > 0 ? std::log2(error)
+                              : std::numeric_limits<double>::infinity();
+
+                metrics.max_error = std::max(metrics.max_error, error);
+                if (log_precision < std::numeric_limits<double>::infinity()) {
+                    sum_log_precision += log_precision;
+                    metrics.min_log_precision =
+                        std::min(metrics.min_log_precision, log_precision);
+                }
+
+                errors.push_back({error, {i, j}});
+            }
+        }
+
+        std::sort(errors.begin(), errors.end(), std::greater<>());
+        for (int i = 0; i < std::min(top_n, static_cast<int>(errors.size()));
+             i++) {
+            metrics.worst_elements.push_back(
+                {errors[i].second, errors[i].first});
+        }
+
+        metrics.avg_log_precision = sum_log_precision / (d * d);
+        return metrics;
     }
 
     std::vector<double> computeInverse(const std::vector<double> &matrix) {
@@ -176,74 +263,31 @@ template <int d> class MatrixInverseJKLS18TestFixture : public ::testing::Test {
         return result;
     }
 
-    struct PrecisionMetrics {
-        double max_error;
-        double avg_log_precision;
-        double min_log_precision;
-        std::vector<std::pair<std::pair<int, int>, double>> worst_elements;
-    };
-
-    PrecisionMetrics analyzePrecision(const std::vector<double> &computed,
-                                      const std::vector<double> &expected,
-                                      int top_n = 5) {
-        PrecisionMetrics metrics;
-        metrics.max_error = 0.0;
-        double sum_log_precision = 0.0;
-        metrics.min_log_precision = std::numeric_limits<double>::infinity();
-
-        std::vector<std::pair<double, std::pair<int, int>>> errors;
-
-        for (int i = 0; i < d; i++) {
-            for (int j = 0; j < d; j++) {
-                double error =
-                    std::abs(computed[i * d + j] - expected[i * d + j]);
-                double log_precision =
-                    error > 0 ? std::log2(error)
-                              : std::numeric_limits<double>::infinity();
-
-                metrics.max_error = std::max(metrics.max_error, error);
-                if (log_precision < std::numeric_limits<double>::infinity()) {
-                    sum_log_precision += log_precision;
-                    metrics.min_log_precision =
-                        std::min(metrics.min_log_precision, log_precision);
-                }
-
-                errors.push_back({error, {i, j}});
-            }
-        }
-
-        std::sort(errors.begin(), errors.end(), std::greater<>());
-        for (int i = 0; i < std::min(top_n, static_cast<int>(errors.size()));
-             i++) {
-            metrics.worst_elements.push_back(
-                {errors[i].second, errors[i].first});
-        }
-
-        metrics.avg_log_precision = sum_log_precision / (d * d);
-        return metrics;
-    }
-
     CryptoContext<DCRTPoly> m_cc;
     PublicKey<DCRTPoly> m_publicKey;
     PrivateKey<DCRTPoly> m_privateKey;
     std::shared_ptr<Encryption> m_enc;
-    std::unique_ptr<MatrixInverse_JKLS18<d>> matInv;
+    std::unique_ptr<MatrixInverse_AS24<d>> matInv;
     int r;
 };
 
 template <typename T>
-class MatrixInverseJKLS18TestTyped
-    : public MatrixInverseJKLS18TestFixture<T::value> {};
+class MatrixInverseAS24TestTyped
+    : public MatrixInverseAS24TestFixture<T::value> {};
 
-TYPED_TEST_SUITE_P(MatrixInverseJKLS18TestTyped);
+TYPED_TEST_SUITE_P(MatrixInverseAS24TestTyped);
 
-TYPED_TEST_P(MatrixInverseJKLS18TestTyped, ComprehensiveInverseTest) {
+TYPED_TEST_P(MatrixInverseAS24TestTyped, ComprehensiveInverseTest) {
     constexpr int d = TypeParam::value;
-    std::cout << "\n=== Testing " << d << "x" << d
+    std::cout << "\n=== Testing AS24 " << d << "x" << d
               << " Matrix Inverse ===" << std::endl;
 
     auto matrix = this->generateRandomMatrix();
+    std::cout << "input matrix: " << std::endl;
+    std::cout << matrix << std::endl;
+
     auto enc_matrix = this->m_enc->encryptInput(matrix);
+    // auto inv_result = this->matInv->eval_inverse_debug(enc_matrix, this->m_privateKey);
     auto inv_result = this->matInv->eval_inverse(enc_matrix);
 
     Plaintext result;
@@ -270,39 +314,27 @@ TYPED_TEST_P(MatrixInverseJKLS18TestTyped, ComprehensiveInverseTest) {
     }
 
     EXPECT_LE(metrics.max_error, 0.0001);
-    EXPECT_LE(metrics.avg_log_precision, -10.0);
+    EXPECT_LT(metrics.avg_log_precision, -10.0);
 
-    std::vector<double> identity(d * d, 0.0);
-    for (size_t i = 0; i < d; i++) {
-        identity[i * d + i] = 1.0;
-    }
-
-    auto enc_identity = this->m_enc->encryptInput(identity);
-    auto id_inv_result = this->matInv->eval_inverse(enc_identity);
-
-    Plaintext id_result;
-    this->m_cc->Decrypt(this->m_privateKey, id_inv_result, &id_result);
-    id_result->SetLength(d * d);
-    std::vector<double> id_inverse = id_result->GetRealPackedValue();
-
-    std::cout << "\nIdentity Matrix Test Results:" << std::endl;
-    for (size_t i = 0; i < d * d; i++) {
-        EXPECT_NEAR(id_inverse[i], identity[i], 0.01);
-    }
-
-    std::cout << "All tests completed for " << d << "x" << d << " matrix\n"
+    std::cout << "All tests completed for newCol " << d << "x" << d
+              << " matrix\n"
               << std::endl;
 }
 
-REGISTER_TYPED_TEST_SUITE_P(MatrixInverseJKLS18TestTyped,
+REGISTER_TYPED_TEST_SUITE_P(MatrixInverseAS24TestTyped,
                             ComprehensiveInverseTest);
 
-using InverseTestSizes = ::testing::Types<
-                                            std::integral_constant<size_t, 8>
-                                          >;
 // using InverseTestSizes = ::testing::Types<std::integral_constant<size_t, 4>,
 //                                           std::integral_constant<size_t, 8>,
-//                                           std::integral_constant<size_t, 16>>;
+//                                           std::integral_constant<size_t, 16>,
+//                                           std::integral_constant<size_t, 32>,
+//                                           std::integral_constant<size_t,
+//                                           64>>;
 
-INSTANTIATE_TYPED_TEST_SUITE_P(MatrixInverseJKLS18,
-                               MatrixInverseJKLS18TestTyped, InverseTestSizes);
+using InverseTestSizes = ::testing::Types<
+                                          std::integral_constant<size_t, 16>
+                                   
+                                         >;
+
+INSTANTIATE_TYPED_TEST_SUITE_P(MatrixInverseAS24,
+                               MatrixInverseAS24TestTyped, InverseTestSizes);

@@ -1,12 +1,10 @@
 #pragma once
 
-#include "rotation.h"
-#include <fstream>
-#include <iostream>
-#include <memory>
 #include <openfhe.h>
-#include <random>
+#include <memory>
 #include <vector>
+#include "encryption.h"
+#include "rotation.h"
 
 using namespace lbcrypto;
 

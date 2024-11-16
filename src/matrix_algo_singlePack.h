@@ -436,12 +436,12 @@ template <int d> class MatrixMult_RT22 : public MatrixOperationBase<d> {
 template <int d> class MatrixMult_AS24 : public MatrixOperationBase<d> {
   private:
     int max_batch;
-    int s;
     int B;
 
   protected:
     using MatrixOperationBase<d>::rot;
     using MatrixOperationBase<d>::m_cc;
+    int s;
 
   public:
     MatrixMult_AS24(std::shared_ptr<Encryption> enc, CryptoContext<DCRTPoly> cc,
@@ -531,6 +531,24 @@ template <int d> class MatrixMult_AS24 : public MatrixOperationBase<d> {
         matrixC->SetSlots(d * d);
         return matrixC;
     }
+
+    Ciphertext<DCRTPoly> clean(const Ciphertext<DCRTPoly> &M){
+        std::vector<double> msk(d*d*s, 0.0);          
+        for(int i=0; i<d*d; i++){
+            msk[i] = 1.0;
+        }                      
+        auto pmsk = m_cc->MakeCKKSPackedPlaintext(msk, 1, 0, nullptr, d*d*s);
+
+        return m_cc->EvalMult(M, pmsk);
+    }
+
+    Ciphertext<DCRTPoly> eval_mult_and_clean(const Ciphertext<DCRTPoly> &matA,
+                                   const Ciphertext<DCRTPoly> &matB){
+
+        auto matC = eval_mult(matA, matB);
+        return clean(matC);
+    }
+    
 };
 
 // Our proposed method, column-based approach

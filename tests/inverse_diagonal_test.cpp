@@ -8,43 +8,10 @@
 #include "matrix_algo_multiPack.h"
 #include "openfhe.h"
 #include "rotation.h"
+#include "diagonal_packing.h"
+#include "matrix_utils.h"
 
 using namespace lbcrypto;
-
-namespace {
-// Utility functions for diagonal packing
-template <typename T>
-std::vector<std::vector<double>>
-extractDiagonalVectors(const std::vector<double> &packedMatrix, T size) {
-    const size_t d = static_cast<size_t>(size);
-    std::vector<std::vector<double>> diagonalVectors(
-        d, std::vector<double>(d, 0.0));
-
-    for (size_t i = 0; i < d; ++i) {
-        for (size_t j = 0; j < d; ++j) {
-            size_t index = (j + i) % d + d * (j % d);
-            diagonalVectors[i][j] = packedMatrix[index];
-        }
-    }
-    return diagonalVectors;
-}
-
-template <typename T>
-std::vector<double>
-packDiagonalVectors(const std::vector<std::vector<double>> &diagonalVectors,
-                    T size) {
-    const size_t d = static_cast<size_t>(size);
-    std::vector<double> packedMatrix(d * d, 0.0);
-
-    for (size_t i = 0; i < d; ++i) {
-        for (size_t j = 0; j < d; ++j) {
-            size_t index = (j + i) % d + d * (j % d);
-            packedMatrix[index] = diagonalVectors[i][j];
-        }
-    }
-    return packedMatrix;
-}
-} // namespace
 
 template <int d> class MatrixInvDiagTest : public ::testing::Test {
   protected:
@@ -99,7 +66,7 @@ template <int d> class MatrixInvDiagTest : public ::testing::Test {
         std::vector<double> matrix(d * d);
         std::random_device rd;
         std::mt19937 gen(rd());
-        std::uniform_real_distribution<double> dis(0.5, 2.0);
+        std::uniform_real_distribution<double> dis(-1, 1);
 
         do {
             // Generate diagonal dominant matrix
@@ -114,19 +81,9 @@ template <int d> class MatrixInvDiagTest : public ::testing::Test {
                 }
                 matrix[i * d + i] = sum + dis(gen); // Make diagonal dominant
             }
-        } while (!isInvertible(matrix));
+        } while (!utils::isInvertible(matrix, d));
 
         return matrix;
-    }
-
-    bool isInvertible(const std::vector<double> &matrix) {
-        double max_elem = 0;
-        double min_elem = std::numeric_limits<double>::max();
-        for (size_t i = 0; i < d * d; i++) {
-            max_elem = std::max(max_elem, std::abs(matrix[i]));
-            min_elem = std::min(min_elem, std::abs(matrix[i]));
-        }
-        return (max_elem / min_elem) < 1e6; // Condition number threshold
     }
 
     void printMatrix(const std::vector<double> &matrix,
@@ -160,8 +117,8 @@ TYPED_TEST_P(MatrixInvDiagTestFixture, MultTest) {
     auto matrixB = this->generateInvertibleMatrix();
 
     // Extract diagonals
-    auto diagA = extractDiagonalVectors(matrixA, d);
-    auto diagB = extractDiagonalVectors(matrixB, d);
+    auto diagA = utils::extractDiagonalVectors(matrixA, d);
+    auto diagB = utils::extractDiagonalVectors(matrixB, d);
 
     // Encrypt diagonals
     std::vector<Ciphertext<DCRTPoly>> encA, encB;
@@ -183,7 +140,7 @@ TYPED_TEST_P(MatrixInvDiagTestFixture, MultTest) {
         result->SetLength(d);
         decrypted_diags.push_back(result->GetRealPackedValue());
     }
-    auto decrypted = packDiagonalVectors(decrypted_diags, d);
+    auto decrypted = utils::packDiagonalVectors(decrypted_diags, d);
 
     // Calculate expected result
     std::vector<double> expected(d * d, 0.0);
@@ -228,7 +185,7 @@ TYPED_TEST_P(MatrixInvDiagTestFixture, InverseTest) {
     auto matrix = this->generateInvertibleMatrix();
 
     // Extract diagonals and encrypt
-    auto diags = extractDiagonalVectors(matrix, d);
+    auto diags = utils::extractDiagonalVectors(matrix, d);
     std::vector<Ciphertext<DCRTPoly>> enc_matrix;
     for (const auto &diag : diags) {
         enc_matrix.push_back(this->m_enc->encryptInput(diag));
@@ -245,7 +202,7 @@ TYPED_TEST_P(MatrixInvDiagTestFixture, InverseTest) {
         result->SetLength(d);
         decrypted_diags.push_back(result->GetRealPackedValue());
     }
-    auto decrypted = packDiagonalVectors(decrypted_diags, d);
+    auto decrypted = utils::packDiagonalVectors(decrypted_diags, d);
 
     // Verify result by multiplying with original matrix
     std::vector<double> identity(d * d, 0.0);

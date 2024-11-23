@@ -7,9 +7,9 @@
 #include "encryption.h"
 #include "matrix_algo_singlePack.h"
 #include "matrix_inversion_algo.h"
+#include "matrix_utils.h"
 #include "openfhe.h"
 #include "rotation.h"
-#include "matrix_utils.h"
 
 using namespace lbcrypto;
 
@@ -27,19 +27,21 @@ template <int d> class MatrixInverseNewColTestFixture : public ::testing::Test {
 
         switch (d) {
         case 4:
-            // Safe, conservative configuraion
-            r = 16;
-            multDepth = 2 * r + 12;
-            scaleModSize = 50;
-            break;
-        case 8:
             r = 18;
             multDepth = 2 * r + 12;
             scaleModSize = 50;
             break;
+        case 8:
+            r = 21;
+            multDepth = 34;
+            scaleModSize = 59;
+            firstModSize = 60;
+            parameters.SetFirstModSize(firstModSize);
+            levelBudget = {4, 5};
+            bsgsDim = {0, 0};
+            break;
         case 16:
-            r = 26;
-            // multDepth = 2*r+12;
+            r = 25;
             multDepth = 34;
             scaleModSize = 59;
             firstModSize = 60;
@@ -48,8 +50,8 @@ template <int d> class MatrixInverseNewColTestFixture : public ::testing::Test {
             bsgsDim = {0, 0};
             break;
         case 32:
-            r = 26;
-            multDepth = 34;
+            r = 28;
+            multDepth = 29;
             scaleModSize = 59;
             firstModSize = 60;
             parameters.SetFirstModSize(firstModSize);
@@ -57,8 +59,8 @@ template <int d> class MatrixInverseNewColTestFixture : public ::testing::Test {
             bsgsDim = {0, 0};
             break;
         case 64:
-            r = 30;
-            multDepth = 31;
+            r = 31;
+            multDepth = 29;
             scaleModSize = 59;
             firstModSize = 60;
             parameters.SetFirstModSize(firstModSize);
@@ -79,7 +81,8 @@ template <int d> class MatrixInverseNewColTestFixture : public ::testing::Test {
         parameters.SetSecurityLevel(HEStd_128_classic);
 
         m_cc = GenCryptoContext(parameters);
-        std::cout << "ring dimension: " << m_cc->GetRingDimension() << std::endl;
+        std::cout << "ring dimension: " << m_cc->GetRingDimension()
+                  << std::endl;
         m_cc->Enable(PKE);
         m_cc->Enable(KEYSWITCH);
         m_cc->Enable(LEVELEDSHE);
@@ -321,15 +324,15 @@ TYPED_TEST_P(MatrixInverseNewColTestTyped, ComprehensiveInverseTest) {
 REGISTER_TYPED_TEST_SUITE_P(MatrixInverseNewColTestTyped,
                             ComprehensiveInverseTest);
 
-using InverseTestSizes = ::testing::Types<
-                                          std::integral_constant<size_t, 64>>;
 // using InverseTestSizes = ::testing::Types<std::integral_constant<size_t, 4>,
 //                                           std::integral_constant<size_t, 8>,
 //                                           std::integral_constant<size_t, 16>,
 //                                           std::integral_constant<size_t, 32>,
 //                                           std::integral_constant<size_t,
 //                                           64>>;
-// using InverseTestSizes = ::testing::Types<std::integral_constant<size_t, 64>>;
 
+using InverseTestSizes = ::testing::Types<std::integral_constant<size_t, 16>,
+                                          std::integral_constant<size_t, 32>,
+                                          std::integral_constant<size_t, 64>>;
 INSTANTIATE_TYPED_TEST_SUITE_P(MatrixInverseNewCol,
                                MatrixInverseNewColTestTyped, InverseTestSizes);

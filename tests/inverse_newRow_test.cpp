@@ -7,9 +7,9 @@
 #include "encryption.h"
 #include "matrix_algo_singlePack.h"
 #include "matrix_inversion_algo.h"
+#include "matrix_utils.h"
 #include "openfhe.h"
 #include "rotation.h"
-#include "matrix_utils.h"
 
 using namespace lbcrypto;
 
@@ -18,7 +18,7 @@ template <int d> class MatrixInverseNewRowTestFixture : public ::testing::Test {
     void SetUp() override {
         switch (d) {
         case 4:
-            r = 13;
+            r = 16;
             break;
         case 8:
             r = 17;
@@ -31,7 +31,7 @@ template <int d> class MatrixInverseNewRowTestFixture : public ::testing::Test {
         }
 
         CCParams<CryptoContextCKKSRNS> parameters;
-        int multDepth = 31;
+        int multDepth = 2 * r + 12;
         parameters.SetMultiplicativeDepth(multDepth);
         parameters.SetScalingModSize(50);
         parameters.SetBatchSize(d * d);

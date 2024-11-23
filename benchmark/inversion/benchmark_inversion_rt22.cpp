@@ -17,38 +17,41 @@ static void BM_RT22_Inversion(benchmark::State& state) {
     CCParams<CryptoContextCKKSRNS> parameters;
 
     switch (d) {
-    case 4:
-        r = 13;
-        multDepth = 2 * r + 12;
-        scaleModSize = 50;
-        break;
-    case 8:
-        r = 17;
-        multDepth = 2 * r + 12;
-        scaleModSize = 50;
-        break;
-    case 16:
-        r = 20;
-        multDepth = 37;
-        scaleModSize = 59;
-        firstModSize = 60;
-        parameters.SetFirstModSize(firstModSize);
-        levelBudget = {4, 4};
-        bsgsDim = {0, 0};
-        break;
-    case 32:
-        r = 22;
-        multDepth = 37;
-        scaleModSize = 59;
-        firstModSize = 60;
-        parameters.SetFirstModSize(firstModSize);
-        levelBudget = {4, 4};
-        bsgsDim = {0, 0};
-        break;
-    default:
-        r = -1;
-    }
-
+        case 4:
+            r = 18;
+            multDepth = 2 * r + 12;
+            scaleModSize = 50;
+            break;
+        case 8:
+            r = 21;
+            multDepth = 29;
+            scaleModSize = 59;
+            firstModSize = 60;
+            parameters.SetFirstModSize(firstModSize);
+            levelBudget = {4, 5};
+            bsgsDim = {0, 0};
+            break;
+        case 16:
+            r = 25;
+            multDepth = 29;
+            scaleModSize = 59;
+            firstModSize = 60;
+            parameters.SetFirstModSize(firstModSize);
+            levelBudget = {4, 5};
+            bsgsDim = {0, 0};
+            break;
+        case 32:
+            r = 28;
+            multDepth = 29;
+            scaleModSize = 59;
+            firstModSize = 60;
+            parameters.SetFirstModSize(firstModSize);
+            levelBudget = {4, 5};
+            bsgsDim = {0, 0};
+            break;
+        default:
+            r = -1;
+        }
     parameters.SetMultiplicativeDepth(multDepth);
     parameters.SetScalingModSize(scaleModSize);
     parameters.SetBatchSize(d * d * d);
@@ -62,11 +65,10 @@ static void BM_RT22_Inversion(benchmark::State& state) {
 
     auto keyPair = cc->KeyGen();
 
-    if (d >= 16) {
+    if (d >= 8) {
         cc->Enable(FHE);
         cc->EvalBootstrapSetup(levelBudget, bsgsDim, d * d);
         cc->EvalBootstrapKeyGen(keyPair.secretKey, d * d); 
-        // SetSlots(d*d) before bootstrapping
     }
 
     std::vector<int> rotations;

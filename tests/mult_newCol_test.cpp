@@ -17,16 +17,17 @@ template <int d> class MatrixMultNewColTest : public ::testing::Test {
         parameters.SetScalingModSize(50);
 
         // For single matrix multiplication
-        int max_batch = 1 << 13;
-        int s = std::min(max_batch / d / d, d);
         parameters.SetBatchSize(d * d);
-
         parameters.SetSecurityLevel(HEStd_128_classic);
 
         m_cc = GenCryptoContext(parameters);
         m_cc->Enable(PKE);
         m_cc->Enable(KEYSWITCH);
         m_cc->Enable(LEVELEDSHE);
+        int max_batch = m_cc->GetRingDimension() / 2;
+        std::cout << "ring dimension: " << m_cc->GetRingDimension()
+                  << std::endl;
+        int s = std::min(max_batch / d / d, d);
 
         auto keyPair = m_cc->KeyGen();
         m_publicKey = keyPair.publicKey;

@@ -20,6 +20,8 @@ set(TEST_SOURCES
     inverse_as24_test.cpp
     inverse_newCol_test.cpp
     inverse_newRow_test.cpp
+    
+    inverse_naive_test.cpp
 )
 
 # Add each test executable

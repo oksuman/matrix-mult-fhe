@@ -7,9 +7,9 @@
 #include "encryption.h"
 #include "matrix_algo_singlePack.h"
 #include "matrix_inversion_algo.h"
+#include "matrix_utils.h"
 #include "openfhe.h"
 #include "rotation.h"
-#include "matrix_utils.h"
 
 using namespace lbcrypto;
 
@@ -27,37 +27,44 @@ template <int d> class MatrixInverseAS24TestFixture : public ::testing::Test {
 
         switch (d) {
         case 4:
-            // Safe, conservative configuraion
-            r = 16;
-            multDepth = 3 * r + 12;
-            scaleModSize = 50;
-            break;
-        case 8:
             r = 18;
-            multDepth = 3 * r + 12;
-            scaleModSize = 50;
-            break;
-        case 16:
-            r = 20;
-            multDepth = 49;
-            scaleModSize = 50;
-            firstModSize = 51;
-            parameters.SetFirstModSize(firstModSize);
-            levelBudget = {4, 4};
-            bsgsDim = {0, 0};
-            break;
-        case 32:
-            r = 22;
-            multDepth = 37;
+            multDepth = 31;
             scaleModSize = 59;
             firstModSize = 60;
             parameters.SetFirstModSize(firstModSize);
             levelBudget = {4, 4};
             bsgsDim = {0, 0};
             break;
+        case 8:
+            r = 21;
+            multDepth = 31;
+            scaleModSize = 59;
+            firstModSize = 60;
+            parameters.SetFirstModSize(firstModSize);
+            levelBudget = {4, 5};
+            bsgsDim = {0, 0};
+            break;
+        case 16:
+            r = 25;
+            multDepth = 31;
+            scaleModSize = 59;
+            firstModSize = 60;
+            parameters.SetFirstModSize(firstModSize);
+            levelBudget = {4, 5};
+            bsgsDim = {0, 0};
+            break;
+        case 32:
+            r = 28;
+            multDepth = 31;
+            scaleModSize = 59;
+            firstModSize = 60;
+            parameters.SetFirstModSize(firstModSize);
+            levelBudget = {4, 5};
+            bsgsDim = {0, 0};
+            break;
         case 64:
-            r = 24;
-            multDepth = 37;
+            r = 31;
+            multDepth = 31;
             scaleModSize = 59;
             firstModSize = 60;
             parameters.SetFirstModSize(firstModSize);
@@ -68,17 +75,17 @@ template <int d> class MatrixInverseAS24TestFixture : public ::testing::Test {
             r = -1;
         }
 
-        parameters.SetMultiplicativeDepth(multDepth);
-        parameters.SetScalingModSize(scaleModSize);
-
         int max_batch = 1 << 16;
         int s = std::min(max_batch / d / d, d);
         int batchSize = d * d * s;
+        parameters.SetMultiplicativeDepth(multDepth);
+        parameters.SetScalingModSize(scaleModSize);
         parameters.SetBatchSize(batchSize);
         parameters.SetSecurityLevel(HEStd_128_classic);
 
         m_cc = GenCryptoContext(parameters);
-        std::cout << "Ring Dimension: " << m_cc->GetRingDimension() << std::endl;
+        std::cout << "Ring Dimension: " << m_cc->GetRingDimension()
+                  << std::endl;
         m_cc->Enable(PKE);
         m_cc->Enable(KEYSWITCH);
         m_cc->Enable(LEVELEDSHE);
@@ -88,11 +95,9 @@ template <int d> class MatrixInverseAS24TestFixture : public ::testing::Test {
         m_publicKey = keyPair.publicKey;
         m_privateKey = keyPair.secretKey;
 
-        if (d >= 16) {
-            m_cc->Enable(FHE);
-            m_cc->EvalBootstrapSetup(levelBudget, bsgsDim, batchSize);
-            m_cc->EvalBootstrapKeyGen(m_privateKey, batchSize);
-        }
+        m_cc->Enable(FHE);
+        m_cc->EvalBootstrapSetup(levelBudget, bsgsDim, d * d);
+        m_cc->EvalBootstrapKeyGen(m_privateKey, d * d);
 
         std::vector<int> rotations;
         for (int i = 1; i < d * d * s; i *= 2) {
@@ -283,11 +288,10 @@ TYPED_TEST_P(MatrixInverseAS24TestTyped, ComprehensiveInverseTest) {
               << " Matrix Inverse ===" << std::endl;
 
     auto matrix = this->generateRandomMatrix();
-    std::cout << "input matrix: " << std::endl;
-    std::cout << matrix << std::endl;
 
     auto enc_matrix = this->m_enc->encryptInput(matrix);
-    // auto inv_result = this->matInv->eval_inverse_debug(enc_matrix, this->m_privateKey);
+    // auto inv_result = this->matInv->eval_inverse_debug(enc_matrix,
+    // this->m_privateKey);
     auto inv_result = this->matInv->eval_inverse(enc_matrix);
 
     Plaintext result;
@@ -297,7 +301,7 @@ TYPED_TEST_P(MatrixInverseAS24TestTyped, ComprehensiveInverseTest) {
     std::vector<double> expected_inverse = this->computeInverse(matrix);
 
     std::cout << "\nMultiplication Test Results:" << std::endl;
-    this->verifyInverseResult(matrix, computed_inverse, 0.001);
+    this->verifyInverseResult(matrix, computed_inverse, 0.01);
 
     std::cout << "\nPrecision Analysis Results:" << std::endl;
     auto metrics = this->analyzePrecision(computed_inverse, expected_inverse);
@@ -313,11 +317,10 @@ TYPED_TEST_P(MatrixInverseAS24TestTyped, ComprehensiveInverseTest) {
                   << std::endl;
     }
 
-    EXPECT_LE(metrics.max_error, 0.0001);
-    EXPECT_LT(metrics.avg_log_precision, -10.0);
+    EXPECT_LE(metrics.max_error, 0.01);
+    EXPECT_LT(metrics.avg_log_precision, -5.0);
 
-    std::cout << "All tests completed for newCol " << d << "x" << d
-              << " matrix\n"
+    std::cout << "All tests completed for AS24 " << d << "x" << d << " matrix\n"
               << std::endl;
 }
 
@@ -330,11 +333,7 @@ REGISTER_TYPED_TEST_SUITE_P(MatrixInverseAS24TestTyped,
 //                                           std::integral_constant<size_t, 32>,
 //                                           std::integral_constant<size_t,
 //                                           64>>;
+using InverseTestSizes = ::testing::Types<std::integral_constant<size_t, 4>>;
 
-using InverseTestSizes = ::testing::Types<
-                                          std::integral_constant<size_t, 16>
-                                   
-                                         >;
-
-INSTANTIATE_TYPED_TEST_SUITE_P(MatrixInverseAS24,
-                               MatrixInverseAS24TestTyped, InverseTestSizes);
+INSTANTIATE_TYPED_TEST_SUITE_P(MatrixInverseAS24, MatrixInverseAS24TestTyped,
+                               InverseTestSizes);

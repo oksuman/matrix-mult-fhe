@@ -68,3 +68,4 @@ target_include_directories(matrix_operations
 add_subdirectory(tests)
 add_subdirectory(benchmark)
 add_subdirectory(app/linear_regression)
+add_subdirectory(utils)

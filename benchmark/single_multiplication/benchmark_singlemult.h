@@ -153,15 +153,15 @@ auto setupRT22() -> SetupOutput<d> {
 template <int d>
 auto setupAS24() {
     CCParams<CryptoContextCKKSRNS> parameters;
-    parameters.SetMultiplicativeDepth(2);
+    parameters.SetMultiplicativeDepth(30);
     parameters.SetScalingModSize(50);
     parameters.SetSecurityLevel(HEStd_128_classic);
 
-    int max_batch = 1 << 13;
+    auto cc = GenCryptoContext(parameters);
+    int max_batch = cc->GetRingDimension()/2;
     int s = std::min(max_batch / d / d, d);
     parameters.SetBatchSize(d * d * s);
 
-    auto cc = GenCryptoContext(parameters);
     cc->Enable(PKE);
     cc->Enable(KEYSWITCH);
     cc->Enable(LEVELEDSHE);
@@ -201,15 +201,15 @@ auto setupAS24() {
 template <int d>
 auto setupNewCol() {
     CCParams<CryptoContextCKKSRNS> parameters;
-    parameters.SetMultiplicativeDepth(2);
+    parameters.SetMultiplicativeDepth(30);
     parameters.SetScalingModSize(50);
     parameters.SetSecurityLevel(HEStd_128_classic);
 
-    int max_batch = 1 << 13;
+    auto cc = GenCryptoContext(parameters);
+    int max_batch = cc->GetRingDimension()/2;
     int s = std::min(max_batch / d / d, d);
     parameters.SetBatchSize(d * d);  // Initial batch size is d*d
 
-    auto cc = GenCryptoContext(parameters);
     cc->Enable(PKE);
     cc->Enable(KEYSWITCH);
     cc->Enable(LEVELEDSHE);

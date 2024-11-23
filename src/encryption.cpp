@@ -5,6 +5,14 @@
 Ciphertext<DCRTPoly> Encryption::encryptInput(std::vector<double> input) {
     assert(input.size() <= m_cc->GetEncodingParams()->GetBatchSize() &&
            "Input size should not larger than Batch Size");
+
+    if (!this->m_cc) {
+        throw std::runtime_error("CryptoContext is not initialized");
+    }
+
+    if (!this->m_PublicKey) {
+        throw std::runtime_error("Public key is not initialized");
+    }
     Plaintext plaintext = m_cc->MakeCKKSPackedPlaintext(input);
     auto ciphertext = m_cc->Encrypt(m_PublicKey, plaintext);
     return ciphertext;

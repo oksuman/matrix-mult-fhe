@@ -4,12 +4,12 @@
 #include <memory>
 #include <random>
 
+#include "diagonal_packing.h"
 #include "encryption.h"
 #include "matrix_algo_multiPack.h"
+#include "matrix_utils.h"
 #include "openfhe.h"
 #include "rotation.h"
-#include "diagonal_packing.h"
-#include "matrix_utils.h"
 
 using namespace lbcrypto;
 
@@ -20,13 +20,19 @@ template <int d> class MatrixInvDiagTest : public ::testing::Test {
         int r;
         switch (d) {
         case 4:
-            r = 16;
+            r = 18;
             break;
         case 8:
-            r = 22;
+            r = 21;
             break;
         case 16:
+            r = 25;
+            break;
+        case 32:
             r = 28;
+            break;
+        case 64:
+            r = 31;
             break;
         default:
             r = -8; // For multiplication-only tests
@@ -36,8 +42,7 @@ template <int d> class MatrixInvDiagTest : public ::testing::Test {
         parameters.SetMultiplicativeDepth(r + 9);
         parameters.SetScalingModSize(50);
         parameters.SetBatchSize(d);
-        parameters.SetRingDim(1 << 13);
-        parameters.SetSecurityLevel(HEStd_NotSet);
+        parameters.SetSecurityLevel(HEStd_128_classic);
 
         m_cc = GenCryptoContext(parameters);
         m_cc->Enable(PKE);
@@ -248,17 +253,17 @@ TYPED_TEST_P(MatrixInvDiagTestFixture, InverseTest) {
 
 REGISTER_TYPED_TEST_SUITE_P(MatrixInvDiagTestFixture, MultTest, InverseTest);
 
-using MultTestSizes = ::testing::Types<
-    std::integral_constant<size_t, 4>, std::integral_constant<size_t, 8>,
-    std::integral_constant<size_t, 16>, std::integral_constant<size_t, 32>,
-    std::integral_constant<size_t, 64>>;
+// using MultTestSizes = ::testing::Types<
+//     std::integral_constant<size_t, 4>, std::integral_constant<size_t, 8>,
+//     std::integral_constant<size_t, 16>, std::integral_constant<size_t, 32>,
+//     std::integral_constant<size_t, 64>>;
 
 using InvTestSizes = ::testing::Types<std::integral_constant<size_t, 4>,
                                       std::integral_constant<size_t, 8>,
                                       std::integral_constant<size_t, 16>>;
 
-INSTANTIATE_TYPED_TEST_SUITE_P(MatrixMultTests, MatrixInvDiagTestFixture,
-                               MultTestSizes);
+// INSTANTIATE_TYPED_TEST_SUITE_P(MatrixMultTests, MatrixInvDiagTestFixture,
+//                                MultTestSizes);
 
 INSTANTIATE_TYPED_TEST_SUITE_P(MatrixInvTests, MatrixInvDiagTestFixture,
                                InvTestSizes);

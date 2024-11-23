@@ -2,16 +2,23 @@
 #include "lr_newcol.h"
 #include <iostream>
 #include <fstream>
+#include "encryption.h"
+#include "rotation.h"
+
+// const int FEATURE_DIM = 8;
+// const int SAMPLE_DIM = 64;
 
 int main() {
-    int multDepth = 60; 
+    int multDepth = 53; 
     uint32_t scaleModSize = 50;
     
     CCParams<CryptoContextCKKSRNS> parameters;
     parameters.SetMultiplicativeDepth(multDepth);
     parameters.SetScalingModSize(scaleModSize);
     parameters.SetBatchSize(SAMPLE_DIM * SAMPLE_DIM);
-    parameters.SetSecurityLevel(HEStd_128_classic);
+    // parameters.SetSecurityLevel(HEStd_128_classic);
+    parameters.SetSecurityLevel(HEStd_NotSet);
+    parameters.SetRingDim(1<<13);
 
     auto cc = GenCryptoContext(parameters);
     cc->Enable(PKE);
@@ -64,9 +71,6 @@ int main() {
 
     // Calculate and record MSE
     double mse = lr.inferenceAndCalculateMSE("data/testSet.csv");
-    std::ofstream mseFile("newcol_mse.txt");
-    mseFile << "MSE: " << mse << "\n";
-    mseFile.close();
-
+    std::cout << "mse: " << mse << std::endl;
     return 0;
 }

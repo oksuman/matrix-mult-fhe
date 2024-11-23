@@ -1,9 +1,7 @@
 set(SQUARING_BENCHMARK_TARGETS
     benchmark_squaring_jkls18
-    benchmark_squaring_jkls18_bootstrap
     benchmark_squaring_rt22
     benchmark_squaring_as24
-    benchmark_squaring_as24_bootstrap
     benchmark_squaring_newcol
     benchmark_squaring_newrow
     benchmark_squaring_diag

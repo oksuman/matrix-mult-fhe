@@ -8,11 +8,14 @@
 #include "matrix_algo_multiPack.h"
 #include "diagonal_packing.h" 
 
+constexpr int SQUARING_ITERATIONS = 15;
+constexpr int Scaling = 50;
+
 template <int d>
 auto setupSquaringJKLS18() {
     CCParams<CryptoContextCKKSRNS> parameters;
-    parameters.SetMultiplicativeDepth(30); 
-    parameters.SetScalingModSize(50);
+    parameters.SetMultiplicativeDepth(SQUARING_ITERATIONS*3); 
+    parameters.SetScalingModSize(Scaling);
     parameters.SetBatchSize(d * d);
     parameters.SetSecurityLevel(HEStd_128_classic);
 
@@ -57,73 +60,10 @@ struct SquaringSetupOutputRT22 {
 };
 
 template <int d>
-auto setupSquaringJKLS18Bootstrap() {
-    uint32_t multDepth = 20;
-    SecurityLevel securityLevel = HEStd_128_classic;
-    SecretKeyDist secretKeyDist = UNIFORM_TERNARY;
-
-    ScalingTechnique rescaleTech = FLEXIBLEAUTO;
-    usint dcrtBits = 50;
-    usint firstMod = 51;
-
-    CCParams<CryptoContextCKKSRNS> parameters;
-    parameters.SetMultiplicativeDepth(multDepth);   
-    parameters.SetScalingModSize(dcrtBits);
-    parameters.SetScalingTechnique(rescaleTech);
-    parameters.SetFirstModSize(firstMod);
-    parameters.SetBatchSize(d*d);
-    parameters.SetSecurityLevel(securityLevel);
-    parameters.SetSecretKeyDist(secretKeyDist);
-
-    parameters.SetNumLargeDigits(3);
-    parameters.SetKeySwitchTechnique(HYBRID);
-
-    auto cc = GenCryptoContext(parameters);
-
-    cc->Enable(PKE);
-    cc->Enable(KEYSWITCH);
-    cc->Enable(LEVELEDSHE);
-    cc->Enable(ADVANCEDSHE);
-    cc->Enable(FHE);
-
-    auto keyPair = cc->KeyGen();
-
-    std::vector<int> rotations;
-    for (int i = 1; i < d * d; i *= 2) {
-        rotations.push_back(i);
-        rotations.push_back(-i);
-    }
-
-    cc->EvalRotateKeyGen(keyPair.secretKey, rotations);
-    cc->EvalMultKeyGen(keyPair.secretKey);
-
-    // Bootstrap setup
-    std::vector<uint32_t> levelBudget = {1, 1};
-    std::vector<uint32_t> bsgsDim = {0, 0};
-    cc->EvalBootstrapSetup(levelBudget, bsgsDim, d*d);
-    cc->EvalBootstrapKeyGen(keyPair.secretKey, d*d);
-
-    auto enc = std::make_shared<Encryption>(cc, keyPair.publicKey);
-    auto algo = std::make_unique<MatrixMult_JKLS18<d>>(enc, cc, keyPair.publicKey, rotations);
-
-    std::vector<double> matrix(d * d);
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<double> dis(-1.0, 1.0);
-    for (int i = 0; i < d * d; i++) {
-        matrix[i] = dis(gen);
-    }
-
-    auto enc_matrix = enc->encryptInput(matrix);
-    std::cout << "Ring Dimension: " << cc->GetRingDimension() << std::endl;
-    return std::make_tuple(std::move(cc), std::move(algo), std::move(enc_matrix));
-}
-
-template <int d>
 auto setupSquaringRT22() -> SquaringSetupOutputRT22<d> {
     CCParams<CryptoContextCKKSRNS> parameters;
-    parameters.SetMultiplicativeDepth(20);  // Increased for 10 rounds of squaring
-    parameters.SetScalingModSize(50);
+    parameters.SetMultiplicativeDepth(SQUARING_ITERATIONS*2);  
+    parameters.SetScalingModSize(Scaling);
     parameters.SetSecurityLevel(HEStd_128_classic);
     parameters.SetBatchSize(d * d * d);
 
@@ -188,15 +128,15 @@ auto setupSquaringRT22() -> SquaringSetupOutputRT22<d> {
 template <int d>
 auto setupSquaringAS24() {
     CCParams<CryptoContextCKKSRNS> parameters;
-    parameters.SetMultiplicativeDepth(30);  
-    parameters.SetScalingModSize(50);
+    parameters.SetMultiplicativeDepth(SQUARING_ITERATIONS*3);  
+    parameters.SetScalingModSize(Scaling);
     parameters.SetSecurityLevel(HEStd_128_classic);
 
-    int max_batch = 1 << 15;
+    auto cc = GenCryptoContext(parameters);
+    int max_batch = cc->GetRingDimension()/2;   
     int s = std::min(max_batch / d / d, d);
     parameters.SetBatchSize(d * d * s);
 
-    auto cc = GenCryptoContext(parameters);
     cc->Enable(PKE);
     cc->Enable(KEYSWITCH);
     cc->Enable(LEVELEDSHE);
@@ -211,74 +151,6 @@ auto setupSquaringAS24() {
 
     cc->EvalRotateKeyGen(keyPair.secretKey, rotations);
     cc->EvalMultKeyGen(keyPair.secretKey);
-
-    auto enc = std::make_shared<Encryption>(cc, keyPair.publicKey);
-    auto algo = std::make_unique<MatrixMult_AS24<d>>(enc, cc, keyPair.publicKey, rotations);
-
-    std::vector<double> matrix(d * d);
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<double> dis(-1.0, 1.0);
-    for (int i = 0; i < d * d; i++) {
-        matrix[i] = dis(gen);
-    }
-
-    auto enc_matrix = enc->encryptInput(matrix);
-    std::cout << "Ring Dimension: " << cc->GetRingDimension() << std::endl;
-    return std::make_tuple(std::move(cc), std::move(algo), std::move(enc_matrix));
-}
-
-template <int d>
-auto setupSquaringAS24Bootstrap() {
-
-    uint32_t multDepth = 20;
-    SecurityLevel securityLevel = HEStd_128_classic;
-    SecretKeyDist secretKeyDist = UNIFORM_TERNARY;
-
-    ScalingTechnique rescaleTech = FLEXIBLEAUTO;
-    usint dcrtBits = 50;
-    usint firstMod = 51;
-
-    int max_batch = 1 << 15;
-    int s = std::min(max_batch / d / d, d);
-
-    CCParams<CryptoContextCKKSRNS> parameters;
-    parameters.SetBatchSize(d * d * s);
-    parameters.SetMultiplicativeDepth(multDepth);   
-    parameters.SetScalingModSize(dcrtBits);
-    parameters.SetScalingTechnique(rescaleTech);
-    parameters.SetFirstModSize(firstMod);
-    parameters.SetSecurityLevel(securityLevel);
-    parameters.SetSecretKeyDist(secretKeyDist);
-
-    parameters.SetNumLargeDigits(3);
-    parameters.SetKeySwitchTechnique(HYBRID);
-
-    auto cc = GenCryptoContext(parameters);
-
-    cc->Enable(PKE);
-    cc->Enable(KEYSWITCH);
-    cc->Enable(LEVELEDSHE);
-    cc->Enable(ADVANCEDSHE);
-    cc->Enable(FHE);
-
-    auto keyPair = cc->KeyGen();
-
-
-    std::vector<int> rotations;
-    for (int i = 1; i < d * d * s; i *= 2) {
-        rotations.push_back(i);
-        rotations.push_back(-i);
-    }
-    cc->EvalRotateKeyGen(keyPair.secretKey, rotations);
-    cc->EvalMultKeyGen(keyPair.secretKey);
-
-    // Bootstrap setup
-    std::vector<uint32_t> levelBudget = {1, 1};
-    std::vector<uint32_t> bsgsDim = {0, 0};
-    cc->EvalBootstrapSetup(levelBudget, bsgsDim, d*d*s);
-    cc->EvalBootstrapKeyGen(keyPair.secretKey, d*d*s);
-
 
     auto enc = std::make_shared<Encryption>(cc, keyPair.publicKey);
     auto algo = std::make_unique<MatrixMult_AS24<d>>(enc, cc, keyPair.publicKey, rotations);
@@ -299,20 +171,21 @@ auto setupSquaringAS24Bootstrap() {
 template <int d>
 auto setupSquaringNewCol() {
     CCParams<CryptoContextCKKSRNS> parameters;
-    parameters.SetMultiplicativeDepth(20); 
-    parameters.SetScalingModSize(50);
+    parameters.SetMultiplicativeDepth(SQUARING_ITERATIONS*2); 
+    parameters.SetScalingModSize(Scaling);
     parameters.SetSecurityLevel(HEStd_128_classic);
 
     parameters.SetBatchSize(d * d);  // Initial batch size is d*d
 
     auto cc = GenCryptoContext(parameters);
+    int max_batch = cc->GetRingDimension()/2;
+
     cc->Enable(PKE);
     cc->Enable(KEYSWITCH);
     cc->Enable(LEVELEDSHE);
 
     auto keyPair = cc->KeyGen();
 
-    int max_batch = 1 << 15;
     int s = std::min(max_batch / d / d, d);
     std::vector<int> rotations;
     for (int i = 1; i < d * d * s; i *= 2) {
@@ -342,8 +215,8 @@ auto setupSquaringNewCol() {
 template <int d>
 auto setupSquaringNewRow() {
     CCParams<CryptoContextCKKSRNS> parameters;
-    parameters.SetMultiplicativeDepth(20);  
-    parameters.SetScalingModSize(50);
+    parameters.SetMultiplicativeDepth(SQUARING_ITERATIONS*2);  
+    parameters.SetScalingModSize(Scaling);
     parameters.SetBatchSize(d * d);
     parameters.SetSecurityLevel(HEStd_128_classic);
 
@@ -382,8 +255,8 @@ auto setupSquaringNewRow() {
 template <int d>
 auto setupSquaringDiag() {
     CCParams<CryptoContextCKKSRNS> parameters;
-    parameters.SetMultiplicativeDepth(10);  // For 10 rounds of squaring
-    parameters.SetScalingModSize(50);
+    parameters.SetMultiplicativeDepth(SQUARING_ITERATIONS);  
+    parameters.SetScalingModSize(Scaling);
     parameters.SetBatchSize(d);  // Note: Uses d instead of d*d
     parameters.SetSecurityLevel(HEStd_128_classic);
 
@@ -424,7 +297,6 @@ auto setupSquaringDiag() {
 }
 
 
-
 // Benchmark functions for each algorithm
 template <int d>
 static void BM_JKLS18_Squaring(benchmark::State& state) {
@@ -437,7 +309,7 @@ static void BM_JKLS18_Squaring(benchmark::State& state) {
         auto current = enc_matrix;
         std::vector<double> squaring_times;
         
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < SQUARING_ITERATIONS; i++) {
             auto squaring_start = std::chrono::high_resolution_clock::now();
             current = algo->eval_mult(current, current);
             auto squaring_end = std::chrono::high_resolution_clock::now();
@@ -456,66 +328,6 @@ static void BM_JKLS18_Squaring(benchmark::State& state) {
     
     double avg_time = std::accumulate(iteration_times.begin(), iteration_times.end(), 0.0) / iteration_times.size();
     state.counters["TotalTime"] = avg_time;
-    state.counters["MatrixSize"] = d;
-}
-
-template <int d>
-static void BM_JKLS18_Squaring_Bootstrap(benchmark::State& state) {
-    auto [cc, algo, enc_matrix] = setupSquaringJKLS18Bootstrap<d>();
-    std::vector<double> iteration_times;
-    std::vector<double> bootstrap_times;
-    
-    for (auto _ : state) {
-        auto start = std::chrono::high_resolution_clock::now();
-        
-        auto current = enc_matrix;
-        std::vector<double> squaring_times;
-        double total_bootstrap_time = 0.0;
-        
-        // First 6 multiplications without bootstrapping
-        for (int i = 0; i < 6; i++) {
-            auto squaring_start = std::chrono::high_resolution_clock::now();
-            current = algo->eval_mult(current, current);
-            auto squaring_end = std::chrono::high_resolution_clock::now();
-            
-            double squaring_duration = std::chrono::duration<double>(squaring_end - squaring_start).count();
-            squaring_times.push_back(squaring_duration);
-            state.counters["Round_" + std::to_string(i+1)] = squaring_duration;
-        }
-        
-        // Remaining multiplications with bootstrapping
-        for (int i = 6; i < 10; i++) {
-            // Bootstrapping
-            auto bootstrap_start = std::chrono::high_resolution_clock::now();
-            current = cc->EvalBootstrap(current);
-            auto bootstrap_end = std::chrono::high_resolution_clock::now();
-            
-            double bootstrap_duration = std::chrono::duration<double>(bootstrap_end - bootstrap_start).count();
-            total_bootstrap_time += bootstrap_duration;
-            state.counters["Bootstrap_Round_" + std::to_string(i+1)] = bootstrap_duration;
-            
-            // Multiplication
-            auto squaring_start = std::chrono::high_resolution_clock::now();
-            current = algo->eval_mult(current, current);
-            auto squaring_end = std::chrono::high_resolution_clock::now();
-            
-            double squaring_duration = std::chrono::duration<double>(squaring_end - squaring_start).count();
-            squaring_times.push_back(squaring_duration);
-            state.counters["Round_" + std::to_string(i+1)] = squaring_duration;
-        }
-        
-        auto end = std::chrono::high_resolution_clock::now();
-        double total_duration = std::chrono::duration<double>(end - start).count();
-        iteration_times.push_back(total_duration);
-        bootstrap_times.push_back(total_bootstrap_time);
-        
-        benchmark::DoNotOptimize(current);
-    }
-    
-    double avg_time = std::accumulate(iteration_times.begin(), iteration_times.end(), 0.0) / iteration_times.size();
-    double avg_bootstrap_time = std::accumulate(bootstrap_times.begin(), bootstrap_times.end(), 0.0) / bootstrap_times.size();
-    state.counters["TotalTime"] = avg_time;
-    state.counters["TotalBootstrapTime"] = avg_bootstrap_time;
     state.counters["MatrixSize"] = d;
 }
 
@@ -533,7 +345,7 @@ static void BM_RT22_Squaring(benchmark::State& state) {
                 auto start_normal = std::chrono::high_resolution_clock::now();
                 
                 std::vector<double> squaring_times;
-                for (int i = 0; i < 10; i++) {
+                for (int i = 0; i < SQUARING_ITERATIONS; i++) {
                     auto squaring_start = std::chrono::high_resolution_clock::now();
                     current = setup.algo->eval_mult(current, current);
                     auto squaring_end = std::chrono::high_resolution_clock::now();
@@ -554,7 +366,7 @@ static void BM_RT22_Squaring(benchmark::State& state) {
                 auto start_strassen = std::chrono::high_resolution_clock::now();
                 
                 std::vector<double> squaring_times;
-                for (int i = 0; i < 10; i++) {
+                for (int i = 0; i < SQUARING_ITERATIONS; i++) {
                     auto squaring_start = std::chrono::high_resolution_clock::now();
                     current_splits = setup.algo->eval_mult_strassen(current_splits, current_splits);
                     auto squaring_end = std::chrono::high_resolution_clock::now();
@@ -587,7 +399,7 @@ static void BM_RT22_Squaring(benchmark::State& state) {
             auto current = setup.enc_matrix;
             std::vector<double> squaring_times;
             
-            for (int i = 0; i < 10; i++) {
+            for (int i = 0; i < SQUARING_ITERATIONS; i++) {
                 auto squaring_start = std::chrono::high_resolution_clock::now();
                 current = setup.algo->eval_mult(current, current);
                 auto squaring_end = std::chrono::high_resolution_clock::now();
@@ -621,7 +433,7 @@ static void BM_AS24_Squaring(benchmark::State& state) {
         auto current = enc_matrix;
         std::vector<double> squaring_times;
         
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < SQUARING_ITERATIONS; i++) {
             auto squaring_start = std::chrono::high_resolution_clock::now();
             current = algo->eval_mult_and_clean(current, current);
             auto squaring_end = std::chrono::high_resolution_clock::now();
@@ -640,66 +452,6 @@ static void BM_AS24_Squaring(benchmark::State& state) {
     
     double avg_time = std::accumulate(iteration_times.begin(), iteration_times.end(), 0.0) / iteration_times.size();
     state.counters["TotalTime"] = avg_time;
-    state.counters["MatrixSize"] = d;
-}
-
-template <int d>
-static void BM_AS24_Squaring_Bootstrap(benchmark::State& state) {
-    auto [cc, algo, enc_matrix] = setupSquaringAS24Bootstrap<d>();
-    std::vector<double> iteration_times;
-    std::vector<double> bootstrap_times;  // Added missing declaration
-    
-    for (auto _ : state) {
-        auto start = std::chrono::high_resolution_clock::now();
-        
-        auto current = enc_matrix;
-        std::vector<double> squaring_times;
-        double total_bootstrap_time = 0.0;
-
-        // First 6 multiplications without bootstrapping
-        for (int i = 0; i < 6; i++) {
-            auto squaring_start = std::chrono::high_resolution_clock::now();
-            current = algo->eval_mult_and_clean(current, current);
-            auto squaring_end = std::chrono::high_resolution_clock::now();
-            
-            double squaring_duration = std::chrono::duration<double>(squaring_end - squaring_start).count();
-            squaring_times.push_back(squaring_duration);
-            state.counters["Round_" + std::to_string(i+1)] = squaring_duration;
-        }
-
-        // Remaining multiplications with bootstrapping
-        for (int i = 6; i < 10; i++) {
-            // Bootstrapping
-            auto bootstrap_start = std::chrono::high_resolution_clock::now();
-            current = cc->EvalBootstrap(current);
-            auto bootstrap_end = std::chrono::high_resolution_clock::now();
-            
-            double bootstrap_duration = std::chrono::duration<double>(bootstrap_end - bootstrap_start).count();
-            total_bootstrap_time += bootstrap_duration;
-            state.counters["Bootstrap_Round_" + std::to_string(i+1)] = bootstrap_duration;
-            
-            // Multiplication
-            auto squaring_start = std::chrono::high_resolution_clock::now();
-            current = algo->eval_mult_and_clean(current, current);  // Changed to eval_mult_and_clean to match AS24 style
-            auto squaring_end = std::chrono::high_resolution_clock::now();
-            
-            double squaring_duration = std::chrono::duration<double>(squaring_end - squaring_start).count();
-            squaring_times.push_back(squaring_duration);
-            state.counters["Round_" + std::to_string(i+1)] = squaring_duration;
-        }
-        
-        auto end = std::chrono::high_resolution_clock::now();
-        double total_duration = std::chrono::duration<double>(end - start).count();
-        iteration_times.push_back(total_duration);
-        bootstrap_times.push_back(total_bootstrap_time);
-        
-        benchmark::DoNotOptimize(current);
-    }
-    
-    double avg_time = std::accumulate(iteration_times.begin(), iteration_times.end(), 0.0) / iteration_times.size();
-    double avg_bootstrap_time = std::accumulate(bootstrap_times.begin(), bootstrap_times.end(), 0.0) / bootstrap_times.size();
-    state.counters["TotalTime"] = avg_time;
-    state.counters["TotalBootstrapTime"] = avg_bootstrap_time;
     state.counters["MatrixSize"] = d;
 }
 
@@ -714,7 +466,7 @@ static void BM_NewCol_Squaring(benchmark::State& state) {
         auto current = enc_matrix;
         std::vector<double> squaring_times;
         
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < SQUARING_ITERATIONS; i++) {
             auto squaring_start = std::chrono::high_resolution_clock::now();
             current = algo->eval_mult(current, current);
             auto squaring_end = std::chrono::high_resolution_clock::now();
@@ -747,7 +499,7 @@ static void BM_NewRow_Squaring(benchmark::State& state) {
         auto current = enc_matrix;
         std::vector<double> squaring_times;
         
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < SQUARING_ITERATIONS; i++) {
             auto squaring_start = std::chrono::high_resolution_clock::now();
             current = algo->eval_mult(current, current);
             auto squaring_end = std::chrono::high_resolution_clock::now();
@@ -780,7 +532,7 @@ static void BM_Diag_Squaring(benchmark::State& state) {
         auto current = enc_matrix;
         std::vector<double> squaring_times;
         
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < SQUARING_ITERATIONS; i++) {
             auto squaring_start = std::chrono::high_resolution_clock::now();
             current = algo->eval_mult(current, current);
             auto squaring_end = std::chrono::high_resolution_clock::now();

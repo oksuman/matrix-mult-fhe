@@ -2,7 +2,7 @@
 #include <cmath>
 #include <openfhe.h>
 #include <vector>
-using namespace lbcrypto; 
+using namespace lbcrypto;
 
 class RotationComposer {
   private:

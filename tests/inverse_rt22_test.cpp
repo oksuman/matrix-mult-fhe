@@ -7,33 +7,61 @@
 #include "encryption.h"
 #include "matrix_algo_singlePack.h"
 #include "matrix_inversion_algo.h"
+#include "matrix_utils.h"
 #include "openfhe.h"
 #include "rotation.h"
-#include "matrix_utils.h"
 
 using namespace lbcrypto;
 
 template <int d> class MatrixInverseRT22TestFixture : public ::testing::Test {
   protected:
     void SetUp() override {
+
+        int multDepth;
+        uint32_t scaleModSize;
+        uint32_t firstModSize;
+        int r;
+
+        std::vector<uint32_t> levelBudget;
+        std::vector<uint32_t> bsgsDim;
+
+        CCParams<CryptoContextCKKSRNS> parameters;
+
         switch (d) {
         case 4:
-            r = 13;
+            r = 16;
+            multDepth = 2 * r + 12;
+            scaleModSize = 50;
             break;
         case 8:
-            r = 17;
+            r = 18;
+            multDepth = 2 * r + 12;
+            scaleModSize = 50;
             break;
         case 16:
-            r = 20;
+            r = 26;
+            multDepth = 34;
+            scaleModSize = 59;
+            firstModSize = 60;
+            parameters.SetFirstModSize(firstModSize);
+            levelBudget = {4, 5};
+            bsgsDim = {0, 0};
+            break;
+        case 32:
+            r = 26;
+            multDepth = 34;
+            scaleModSize = 59;
+            firstModSize = 60;
+            parameters.SetFirstModSize(firstModSize);
+            levelBudget = {4, 5};
+            bsgsDim = {0, 0};
             break;
         default:
             r = -1;
         }
 
-        CCParams<CryptoContextCKKSRNS> parameters;
-        int multDepth = 31;
         parameters.SetMultiplicativeDepth(multDepth);
-        parameters.SetScalingModSize(50);
+        parameters.SetScalingModSize(scaleModSize);
         parameters.SetBatchSize(d * d * d);
         parameters.SetSecurityLevel(HEStd_128_classic);
 
@@ -54,6 +82,11 @@ template <int d> class MatrixInverseRT22TestFixture : public ::testing::Test {
         }
         m_cc->EvalRotateKeyGen(m_privateKey, rotations);
         m_cc->EvalMultKeyGen(m_privateKey);
+        if (d >= 16) {
+            m_cc->Enable(FHE);
+            m_cc->EvalBootstrapSetup(levelBudget, bsgsDim, d * d);
+            m_cc->EvalBootstrapKeyGen(keyPair.secretKey, d * d);
+        }
 
         m_enc = std::make_shared<Encryption>(m_cc, m_publicKey);
         matInv = std::make_unique<MatrixInverse_RT22<d>>(

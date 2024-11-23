@@ -9,7 +9,7 @@ run_benchmark() {
     
     # Cooling period before benchmark
     echo "System cooling before $algo..."
-    sleep 15
+    sleep 45
     sync
     
     # Run benchmark and capture output
@@ -22,7 +22,7 @@ run_benchmark() {
     
     # Cooling period after benchmark
     echo "System cooling after $algo..."
-    sleep 15
+    sleep 45
     
     echo "" >> squaring_benchmark_results.txt
 }
@@ -30,13 +30,11 @@ run_benchmark() {
 # List of squaring benchmark executables
 SQUARING_ALGORITHMS=(
     "benchmark_squaring_jkls18"
-    "benchmark_squaring_jkls18_bootstrap"
     "benchmark_squaring_rt22"
+    "benchmark_squaring_diag"
     "benchmark_squaring_as24"
-    "benchmark_squaring_as24_bootstrap"
     "benchmark_squaring_newcol"
     "benchmark_squaring_newrow"
-    "benchmark_squaring_diag"
 )
 
 # Initialize result file

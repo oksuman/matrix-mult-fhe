@@ -93,6 +93,23 @@ chmod +x run_squaring_benchmarks.sh
 ./run_squaring_benchmarks.sh
 ```
 
+### Inversion 
+
+1. Navigate to the benchmark directory:
+```bash
+cd build/benchmark/inversion
+```
+
+2. Grant execution permission to the script:
+```bash
+chmod +x run_inversion_benchmarks.sh
+```
+
+3. Run the benchmarks:
+```bash
+./run_inversion_benchmarks.sh
+```
+
 The script will:
 - Run each algorithm's squaring benchmark separately
 - Allow system cooling between runs

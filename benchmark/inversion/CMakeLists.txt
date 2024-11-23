@@ -5,6 +5,7 @@ set(INVERSION_BENCHMARK_TARGETS
     benchmark_inversion_newcol
     benchmark_inversion_newrow
     benchmark_inversion_diag
+    benchmark_inversion_naive
 )
 
 foreach(target ${INVERSION_BENCHMARK_TARGETS})

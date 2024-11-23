@@ -1,6 +1,10 @@
 add_executable(lr_newcol
-    src/main.cpp
+    src/main_newcol.cpp
 )
+
+# add_executable(lr_as24
+#     src/main_as24.cpp
+# )
 
 target_include_directories(lr_newcol
     PRIVATE

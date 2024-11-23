@@ -13,19 +13,19 @@ static void BM_Diag_Inversion(benchmark::State& state) {
     int r;
     switch (d) {
     case 4:
-        r = 16;
+        r = 18;
         break;
     case 8:
-        r = 22;
+        r = 21;
         break;
     case 16:
-        r = 28;
+        r = 25;
         break;
     case 32:
-        r = 30;
+        r = 28;
         break;
     case 64:
-        r = 30;
+        r = 31;
         break;
     default:
         r = -1;

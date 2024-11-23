@@ -17,51 +17,58 @@ static void BM_AS24_Inversion(benchmark::State& state) {
     CCParams<CryptoContextCKKSRNS> parameters;
 
     switch (d) {
-    case 4:
-        r = 16;
-        multDepth = 3 * r + 12;
-        scaleModSize = 50;
-        break;
-    case 8:
-        r = 18;
-        multDepth = 3 * r + 12;
-        scaleModSize = 50;
-        break;
-    case 16:
-        r = 20;
-        multDepth = 37;
-        scaleModSize = 59;
-        firstModSize = 60;
-        parameters.SetFirstModSize(firstModSize);
-        levelBudget = {4, 4};
-        bsgsDim = {0, 0};
-        break;
-    case 32:
-        r = 22;
-        multDepth = 37;
-        scaleModSize = 59;
-        firstModSize = 60;
-        parameters.SetFirstModSize(firstModSize);
-        levelBudget = {4, 4};
-        bsgsDim = {0, 0};
-        break;
-    case 64:
-        r = 24;
-        multDepth = 37;
-        scaleModSize = 59;
-        firstModSize = 60;
-        parameters.SetFirstModSize(firstModSize);
-        levelBudget = {4, 5};
-        bsgsDim = {0, 0};
-        break;
-    default:
-        r = -1;
+        case 4:
+            r = 18;
+            multDepth = 29;
+            scaleModSize = 59;
+            firstModSize = 60;
+            parameters.SetFirstModSize(firstModSize);
+            levelBudget = {4, 4};
+            bsgsDim = {0, 0};
+            break;
+        case 8:
+            r = 21;
+            multDepth = 29;
+            scaleModSize = 59;
+            firstModSize = 60;
+            parameters.SetFirstModSize(firstModSize);
+            levelBudget = {4, 5};
+            bsgsDim = {0, 0};
+            break;
+        case 16:
+            r = 25;
+            multDepth = 29;
+            scaleModSize = 59;
+            firstModSize = 60;
+            parameters.SetFirstModSize(firstModSize);
+            levelBudget = {4, 5};
+            bsgsDim = {0, 0};
+            break;
+        case 32:
+            r = 28;
+            multDepth = 29;
+            scaleModSize = 59;
+            firstModSize = 60;
+            parameters.SetFirstModSize(firstModSize);
+            levelBudget = {4, 5};
+            bsgsDim = {0, 0};
+            break;
+        case 64:
+            r = 31;
+            multDepth = 29;
+            scaleModSize = 59;
+            firstModSize = 60;
+            parameters.SetFirstModSize(firstModSize);
+            levelBudget = {4, 5};
+            bsgsDim = {0, 0};
+            break;
+        default:
+            r = -1;
     }
 
+    int max_batch = 1 << 16;
     parameters.SetMultiplicativeDepth(multDepth);
     parameters.SetScalingModSize(scaleModSize);
-
-    int max_batch = 1 << 16;
     int s = std::min(max_batch / d / d, d);
     parameters.SetBatchSize(d * d * s);
     parameters.SetSecurityLevel(HEStd_128_classic);
@@ -71,15 +78,12 @@ static void BM_AS24_Inversion(benchmark::State& state) {
     cc->Enable(KEYSWITCH);
     cc->Enable(LEVELEDSHE);
     cc->Enable(ADVANCEDSHE);
+    cc->Enable(FHE);
 
     auto keyPair = cc->KeyGen();
-
-    if (d >= 16) {
-        cc->Enable(FHE);
-        cc->EvalBootstrapSetup(levelBudget, bsgsDim, d * d);
-        cc->EvalBootstrapKeyGen(keyPair.secretKey, d * d); 
-        // SetSlots(d*d) before bootstrapping
-    }
+    cc->EvalBootstrapSetup(levelBudget, bsgsDim, d * d);
+    cc->EvalBootstrapKeyGen(keyPair.secretKey, d * d); 
+  
 
     std::vector<int> rotations;
     for (int i = 1; i < d * d * s; i *= 2) {
@@ -122,8 +126,8 @@ static void BM_AS24_Inversion(benchmark::State& state) {
 
 BENCHMARK_TEMPLATE(BM_AS24_Inversion, 4)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
 BENCHMARK_TEMPLATE(BM_AS24_Inversion, 8)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
-// BENCHMARK_TEMPLATE(BM_AS24_Inversion, 16)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
-// BENCHMARK_TEMPLATE(BM_AS24_Inversion, 32)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
-// BENCHMARK_TEMPLATE(BM_AS24_Inversion, 64)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
+BENCHMARK_TEMPLATE(BM_AS24_Inversion, 16)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
+BENCHMARK_TEMPLATE(BM_AS24_Inversion, 32)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
+BENCHMARK_TEMPLATE(BM_AS24_Inversion, 64)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
 
 BENCHMARK_MAIN();

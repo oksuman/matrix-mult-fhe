@@ -6,40 +6,77 @@
 
 #include "encryption.h"
 #include "matrix_inversion_algo.h"
+#include "matrix_utils.h"
 #include "openfhe.h"
 #include "rotation.h"
-#include "matrix_utils.h"
 
 using namespace lbcrypto;
 
 template <int d> class MatrixInverseJKLS18TestFixture : public ::testing::Test {
   protected:
     void SetUp() override {
+        int multDepth;
+        uint32_t scaleModSize;
+        uint32_t firstModSize;
+        int r;
+
+        std::vector<uint32_t> levelBudget;
+        std::vector<uint32_t> bsgsDim;
+
+        CCParams<CryptoContextCKKSRNS> parameters;
+
         switch (d) {
         case 4:
-            r = 16;
+            r = 18;
+            multDepth = 31;
+            scaleModSize = 59;
+            firstModSize = 60;
+            parameters.SetFirstModSize(firstModSize);
+            levelBudget = {4, 4};
+            bsgsDim = {0, 0};
             break;
         case 8:
-            r = 18;
+            r = 21;
+            multDepth = 31;
+            scaleModSize = 59;
+            firstModSize = 60;
+            parameters.SetFirstModSize(firstModSize);
+            levelBudget = {4, 5};
+            bsgsDim = {0, 0};
             break;
         case 16:
-            r = 20;
+            r = 25;
+            multDepth = 31;
+            scaleModSize = 59;
+            firstModSize = 60;
+            parameters.SetFirstModSize(firstModSize);
+            levelBudget = {4, 5};
+            bsgsDim = {0, 0};
             break;
         case 32:
-            r = 22;
+            r = 28;
+            multDepth = 31;
+            scaleModSize = 59;
+            firstModSize = 60;
+            parameters.SetFirstModSize(firstModSize);
+            levelBudget = {4, 5};
+            bsgsDim = {0, 0};
             break;
         case 64:
-            r = 24;
+            r = 31;
+            multDepth = 31;
+            scaleModSize = 59;
+            firstModSize = 60;
+            parameters.SetFirstModSize(firstModSize);
+            levelBudget = {4, 5};
+            bsgsDim = {0, 0};
             break;
         default:
             r = -1;
         }
 
-        CCParams<CryptoContextCKKSRNS> parameters;
-        int multDepth = 3*r+12;
-        // int multDepth = 31;
         parameters.SetMultiplicativeDepth(multDepth);
-        parameters.SetScalingModSize(50);
+        parameters.SetScalingModSize(scaleModSize);
         parameters.SetBatchSize(d * d);
         parameters.SetSecurityLevel(HEStd_128_classic);
 
@@ -48,22 +85,27 @@ template <int d> class MatrixInverseJKLS18TestFixture : public ::testing::Test {
         m_cc->Enable(KEYSWITCH);
         m_cc->Enable(LEVELEDSHE);
         m_cc->Enable(ADVANCEDSHE);
+        m_cc->Enable(FHE);
 
         auto keyPair = m_cc->KeyGen();
         m_publicKey = keyPair.publicKey;
         m_privateKey = keyPair.secretKey;
+        m_cc->EvalBootstrapSetup(levelBudget, bsgsDim, d * d);
+        m_cc->EvalBootstrapKeyGen(keyPair.secretKey, d * d);
 
+        // Setup rotation keys
         std::vector<int> rotations;
         for (int i = 1; i < d * d; i *= 2) {
             rotations.push_back(i);
             rotations.push_back(-i);
         }
-        m_cc->EvalRotateKeyGen(m_privateKey, rotations);
-        m_cc->EvalMultKeyGen(m_privateKey);
 
-        m_enc = std::make_shared<Encryption>(m_cc, m_publicKey);
+        m_cc->EvalRotateKeyGen(keyPair.secretKey, rotations);
+        m_cc->EvalMultKeyGen(keyPair.secretKey);
+
+        m_enc = std::make_shared<Encryption>(m_cc, keyPair.publicKey);
         matInv = std::make_unique<MatrixInverse_JKLS18<d>>(
-            m_enc, m_cc, m_publicKey, rotations, r, multDepth);
+            m_enc, m_cc, keyPair.publicKey, rotations, r, multDepth);
     }
 
     std::vector<double> generateRandomMatrix() {
@@ -243,6 +285,7 @@ TYPED_TEST_P(MatrixInverseJKLS18TestTyped, ComprehensiveInverseTest) {
               << " Matrix Inverse ===" << std::endl;
 
     auto matrix = this->generateRandomMatrix();
+
     auto enc_matrix = this->m_enc->encryptInput(matrix);
     auto inv_result = this->matInv->eval_inverse(enc_matrix);
 
@@ -298,11 +341,11 @@ REGISTER_TYPED_TEST_SUITE_P(MatrixInverseJKLS18TestTyped,
                             ComprehensiveInverseTest);
 
 using InverseTestSizes = ::testing::Types<
-                                            std::integral_constant<size_t, 8>
-                                          >;
-// using InverseTestSizes = ::testing::Types<std::integral_constant<size_t, 4>,
-//                                           std::integral_constant<size_t, 8>,
-//                                           std::integral_constant<size_t, 16>>;
+    std::integral_constant<size_t, 4>, std::integral_constant<size_t, 8>,
+    std::integral_constant<size_t, 16>, std::integral_constant<size_t, 32>,
+    std::integral_constant<size_t, 64>
+
+    >;
 
 INSTANTIATE_TYPED_TEST_SUITE_P(MatrixInverseJKLS18,
                                MatrixInverseJKLS18TestTyped, InverseTestSizes);

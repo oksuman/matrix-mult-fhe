@@ -17,39 +17,46 @@ static void BM_JKLS18_Inversion(benchmark::State& state) {
 
     CCParams<CryptoContextCKKSRNS> parameters;
 
-    // Configure based on dimension
     switch (d) {
     case 4:
-        r = 16;
-        multDepth = 3 * r + 12;  
-        scaleModSize = 50;
-        break;
-    case 8:
         r = 18;
-        multDepth = 3 * r + 12;
-        scaleModSize = 50;
-        break;
-    case 16:
-        r = 20;
-        multDepth = 37;
+        multDepth = 29;
         scaleModSize = 59;
         firstModSize = 60;
         parameters.SetFirstModSize(firstModSize);
         levelBudget = {4, 4};
+        bsgsDim = {0, 0};
+        break;
+    case 8:
+        r = 21;
+        multDepth = 29;
+        scaleModSize = 59;
+        firstModSize = 60;
+        parameters.SetFirstModSize(firstModSize);
+        levelBudget = {4, 5};
+        bsgsDim = {0, 0};
+        break;
+    case 16:
+        r = 25;
+        multDepth = 29;
+        scaleModSize = 59;
+        firstModSize = 60;
+        parameters.SetFirstModSize(firstModSize);
+        levelBudget = {4, 5};
         bsgsDim = {0, 0};
         break;
     case 32:
-        r = 22;
-        multDepth = 37;
+        r = 28;
+        multDepth = 29;
         scaleModSize = 59;
         firstModSize = 60;
         parameters.SetFirstModSize(firstModSize);
-        levelBudget = {4, 4};
+        levelBudget = {4, 5};
         bsgsDim = {0, 0};
         break;
     case 64:
-        r = 24;
-        multDepth = 37;
+        r = 31;
+        multDepth = 29;
         scaleModSize = 59;
         firstModSize = 60;
         parameters.SetFirstModSize(firstModSize);
@@ -70,22 +77,19 @@ static void BM_JKLS18_Inversion(benchmark::State& state) {
     cc->Enable(KEYSWITCH);
     cc->Enable(LEVELEDSHE);
     cc->Enable(ADVANCEDSHE);
+    cc->Enable(FHE);
 
     auto keyPair = cc->KeyGen();
-
-    // Enable bootstrapping for larger dimensions
-    if (d >= 16) {
-        cc->Enable(FHE);
-        cc->EvalBootstrapSetup(levelBudget, bsgsDim, d * d);
-        cc->EvalBootstrapKeyGen(keyPair.secretKey, d * d);
-    }
-
+    cc->EvalBootstrapSetup(levelBudget, bsgsDim, d * d);
+    cc->EvalBootstrapKeyGen(keyPair.secretKey, d * d);
+    
     // Setup rotation keys
     std::vector<int> rotations;
     for (int i = 1; i < d * d; i *= 2) {
         rotations.push_back(i);
         rotations.push_back(-i);
     }
+
     cc->EvalRotateKeyGen(keyPair.secretKey, rotations);
     cc->EvalMultKeyGen(keyPair.secretKey);
 
@@ -105,7 +109,6 @@ static void BM_JKLS18_Inversion(benchmark::State& state) {
     } while (!utils::isInvertible(matrix, d));
 
     auto enc_matrix = enc->encryptInput(matrix);
-
     std::cout << "Ring Dimension: " << cc->GetRingDimension() << std::endl;
 
     for (auto _ : state) {
@@ -121,11 +124,10 @@ static void BM_JKLS18_Inversion(benchmark::State& state) {
     }
 }
 
-// Register benchmarks for different matrix sizes
-BENCHMARK_TEMPLATE(BM_JKLS18_Inversion, 4)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
-BENCHMARK_TEMPLATE(BM_JKLS18_Inversion, 8)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
-// BENCHMARK_TEMPLATE(BM_JKLS18_Inversion, 16)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
-// BENCHMARK_TEMPLATE(BM_JKLS18_Inversion, 32)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
-// BENCHMARK_TEMPLATE(BM_JKLS18_Inversion, 64)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
+// BENCHMARK_TEMPLATE(BM_JKLS18_Inversion, 4)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
+// BENCHMARK_TEMPLATE(BM_JKLS18_Inversion, 8)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
+BENCHMARK_TEMPLATE(BM_JKLS18_Inversion, 16)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
+BENCHMARK_TEMPLATE(BM_JKLS18_Inversion, 32)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
+BENCHMARK_TEMPLATE(BM_JKLS18_Inversion, 64)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
 
 BENCHMARK_MAIN();

@@ -1,10 +1,10 @@
 #pragma once
 
-#include <openfhe.h>
-#include <memory>
-#include <vector>
 #include "encryption.h"
 #include "rotation.h"
+#include <memory>
+#include <openfhe.h>
+#include <vector>
 
 using namespace lbcrypto;
 
@@ -119,7 +119,8 @@ template <int d> class MatrixInv_diag : public MatrixMultiPackBase<d> {
             m_cc->EvalAddInPlace(trace, rot->rotate(trace, d / (1 << i)));
         }
 
-        auto trace_reciprocal = this->m_cc->EvalDivide(trace, d, d * d, 50);
+        auto trace_reciprocal =
+            this->m_cc->EvalDivide(trace, (d * d) / 3 - d, (d * d) / 3 + d, 50);
 
         std::vector<Ciphertext<DCRTPoly>> Y;
         for (int i = 0; i < d; i++) {

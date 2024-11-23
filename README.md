@@ -24,7 +24,7 @@ The OpenFHE library must be installed on your system. You can find:
 
 1. Clone the repository with submodules:
 ```bash
-git clone --recursive [https://github.com/oksuman/matrix-mult-fhe.git]
+git clone --recursive https://github.com/oksuman/matrix-mult-fhe.git
 cd matrix-mult-fhe
 ```
 
@@ -120,10 +120,10 @@ cd build/app/linear_regression
 This project implements matrix multiplication algorithms from the following papers:
 
 ### JKLS18
-Xiaoqian Jiang, Miran Kim, Kristin E. Lauter, and Yongsoo Song. "Secure Outsourced Matrix Computation and Application to Neural Networks." In *Proceedings of the 2018 ACM SIGSAC Conference on Computer and Communications Security (CCS 2018)*, pages 1209-1222, 2018. [Link][https://eprint.iacr.org/2018/1041.pdf]
+Xiaoqian Jiang, Miran Kim, Kristin E. Lauter, and Yongsoo Song. "Secure Outsourced Matrix Computation and Application to Neural Networks." In *Proceedings of the 2018 ACM SIGSAC Conference on Computer and Communications Security (CCS 2018)*, pages 1209-1222, 2018. [https://eprint.iacr.org/2018/1041.pdf]
 
 ### RT22
-Panagiotis Rizomiliotis and Aikaterini Triakosia. "On Matrix Multiplication with Homomorphic Encryption." In *Proceedings of the 2022 on Cloud Computing Security Workshop (CCSW 2022)*, pages 53-61, 2022. [Link][https://dl.acm.org/doi/10.1145/3560810.3564267]
+Panagiotis Rizomiliotis and Aikaterini Triakosia. "On Matrix Multiplication with Homomorphic Encryption." In *Proceedings of the 2022 on Cloud Computing Security Workshop (CCSW 2022)*, pages 53-61, 2022. [https://dl.acm.org/doi/10.1145/3560810.3564267]
 
 ### AS24
-Aikata Aikata and Sujoy Sinha Roy. "Secure and Efficient Outsourced Matrix Multiplication with Homomorphic Encryption." To appear in the proceedings of INDOCRYPT 2024, 2024. [Link][https://eprint.iacr.org/2024/1730.pdf]
+Aikata Aikata and Sujoy Sinha Roy. "Secure and Efficient Outsourced Matrix Multiplication with Homomorphic Encryption." To appear in the proceedings of INDOCRYPT 2024, 2024. [https://eprint.iacr.org/2024/1730.pdf]

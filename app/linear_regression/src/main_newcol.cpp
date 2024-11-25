@@ -9,38 +9,50 @@
 // const int SAMPLE_DIM = 64;
 
 int main() {
-    int multDepth = 53; 
-    uint32_t scaleModSize = 50;
+    int multDepth = 35; 
+    uint32_t scaleModSize = 59;
+    uint32_t firstModSize = 60;
     
     CCParams<CryptoContextCKKSRNS> parameters;
     parameters.SetMultiplicativeDepth(multDepth);
+
     parameters.SetScalingModSize(scaleModSize);
+    parameters.SetFirstModSize(firstModSize);
+
     parameters.SetBatchSize(SAMPLE_DIM * SAMPLE_DIM);
-    // parameters.SetSecurityLevel(HEStd_128_classic);
-    parameters.SetSecurityLevel(HEStd_NotSet);
-    parameters.SetRingDim(1<<13);
+    parameters.SetSecurityLevel(HEStd_128_classic);
+    // parameters.SetSecurityLevel(HEStd_NotSet);
+    // parameters.SetRingDim(1<<17);
+
+    std::vector<uint32_t> levelBudget = {4, 5};
+    std::vector<uint32_t> bsgsDim = {0, 0};
+
 
     auto cc = GenCryptoContext(parameters);
     cc->Enable(PKE);
     cc->Enable(KEYSWITCH);
     cc->Enable(LEVELEDSHE);
     cc->Enable(ADVANCEDSHE);
+    cc->Enable(FHE);
+        
 
     auto keyPair = cc->KeyGen();
 
     // Setup rotation keys
     std::vector<int> rotations;
-    for (int i = 1; i < SAMPLE_DIM * SAMPLE_DIM; i *= 2) {
+    for (int i = 1; i < cc->GetRingDimension() / 2; i *= 2) {
         rotations.push_back(i);
         rotations.push_back(-i);
     }
     cc->EvalRotateKeyGen(keyPair.secretKey, rotations);
     cc->EvalMultKeyGen(keyPair.secretKey);
+    cc->EvalBootstrapSetup(levelBudget, bsgsDim, FEATURE_DIM * FEATURE_DIM);
+    cc->EvalBootstrapKeyGen(keyPair.secretKey, FEATURE_DIM * FEATURE_DIM);
 
     auto enc = std::make_shared<Encryption>(cc, keyPair.publicKey);
 
     // Create LinearRegression instance
-    LinearRegression_NewCol lr(enc, cc, keyPair, rotations);
+    LinearRegression_NewCol lr(enc, cc, keyPair, rotations, multDepth);
 
     // Process training data
     std::vector<double> features;

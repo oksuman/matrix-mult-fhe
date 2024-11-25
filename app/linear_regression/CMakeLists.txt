@@ -2,9 +2,9 @@ add_executable(lr_newcol
     src/main_newcol.cpp
 )
 
-# add_executable(lr_as24
-#     src/main_as24.cpp
-# )
+add_executable(lr_as24
+     src/main_as24.cpp
+)
 
 target_include_directories(lr_newcol
     PRIVATE
@@ -25,16 +25,21 @@ target_link_libraries(lr_newcol
     utils
 )
 
-# Make sure data directory exists
-file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/data)
+target_include_directories(lr_as24
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/utils
+    ${OpenFHE_INCLUDE}
+    ${OpenFHE_INCLUDE}/core
+    ${OpenFHE_INCLUDE}/pke
+    ${OpenFHE_INCLUDE}/third-party/include
+)
 
-# Copy data files if they exist
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/data/trainSet.csv)
-    file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/data/trainSet.csv
-         DESTINATION ${CMAKE_BINARY_DIR}/data)
-endif()
-
-if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/data/testSet.csv)
-    file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/data/testSet.csv
-         DESTINATION ${CMAKE_BINARY_DIR}/data)
-endif()
+target_link_libraries(lr_as24
+    PRIVATE
+    matrix_operations
+    OPENFHEcore
+    OPENFHEpke
+    utils
+)

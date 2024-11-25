@@ -6,6 +6,7 @@
 class LinearRegression_AS24 : public LinearRegressionBase {
 private:
     const int m_maxBatch;
+    const int m_multDepth;
 
     std::vector<double> generatePhiMsk(int k, int d, int s) {
         std::vector<double> msk(d * d * s, 0);
@@ -77,6 +78,71 @@ private:
         return matrixC;
     }
 
+    Ciphertext<DCRTPoly> clean(const Ciphertext<DCRTPoly> &M, int s, int d) {
+        std::vector<double> msk(d * d * s, 0.0);
+        for (int i = 0; i < d * d; i++) {
+            msk[i] = 1.0;
+        }
+        auto pmsk =
+            m_cc->MakeCKKSPackedPlaintext(msk, 1, 0, nullptr, d * d * s);
+
+        return m_cc->EvalMult(M, pmsk);
+    }
+
+    Ciphertext<DCRTPoly> eval_inverse(const Ciphertext<DCRTPoly> &M, int s, int d, int r) {
+        std::cout << std::endl;
+        std::cout << "start inversion" << std::endl;
+        std::vector<double> vI = this->initializeIdentityMatrix(d);
+        Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI, 1, 0, nullptr, d*d);
+
+        std::ofstream logFile("intermediate_results.txt");
+        auto trace = this->eval_trace(M, d, d * d);
+        logIntermediateResult("trace", trace, logFile);
+        auto trace_reciprocal =
+            this->m_cc->EvalDivide(trace, 350, 355, 5);
+        logIntermediateResult("1/trace", trace_reciprocal, logFile);
+
+        auto Y = this->m_cc->EvalMult(pI, trace_reciprocal);
+        auto A_bar = this->m_cc->EvalSub(pI, this->m_cc->EvalMultAndRelinearize(M, trace_reciprocal));
+        Y->SetSlots(d*d*s);
+        A_bar->SetSlots(d*d*s);
+        Y = this->clean(Y, s, d);
+        A_bar = this->clean(A_bar, s, d);
+
+        std::cout << std::endl; 
+        std::cout << "start loop" << std::endl;
+        std::cout << "d: " << d << std::endl;
+        logIntermediateResult("Y", Y, logFile);
+        for (int i = 0; i < r - 1; i++) {
+            Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar), d, s);
+            A_bar = this->eval_mult(A_bar, A_bar, d, s);
+
+            logIntermediateResult("Y", Y, logFile);
+            if ((int)Y->GetLevel() >= this->m_multDepth - 3) {
+                A_bar->SetSlots(d * d);
+                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+                Y->SetSlots(d * d);
+                Y = m_cc->EvalBootstrap(Y, 2, 18);
+  
+                A_bar->SetSlots(d * d * s);
+                A_bar = this->clean(A_bar, s, d);
+                Y->SetSlots(d * d * s);
+                Y = this->clean(Y, s, d);
+            } else {
+                A_bar = this->clean(A_bar, s, d);
+                Y = this->clean(Y, s, d);
+            }
+            std::cout << "i: " << i << std::endl;
+            std::cout << "level: " << (int)Y->GetLevel() << std::endl;
+        }
+        Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar), d, s);
+        if ((int)Y->GetLevel() >= this->m_multDepth - 2) {
+            Y->SetSlots(d * d);
+            Y = m_cc->EvalBootstrap(Y, 2, 18);
+        }
+        return Y;
+    }
+
     Ciphertext<DCRTPoly> getZeroCiphertext(int d) {
         std::vector<double> zeroVec(d * d, 0.0);
         return m_enc->encryptInput(zeroVec);
@@ -86,9 +152,11 @@ public:
     LinearRegression_AS24(std::shared_ptr<Encryption> enc,
                          CryptoContext<DCRTPoly> cc,
                          KeyPair<DCRTPoly> keyPair,
-                         std::vector<int> rotIndices)
+                         std::vector<int> rotIndices,
+                         int multDepth)
         : LinearRegressionBase(enc, cc, keyPair, rotIndices)
         , m_maxBatch(cc->GetRingDimension() / 2)
+        , m_multDepth(multDepth)
     {}
 
     TimingResult trainWithTimings(const Ciphertext<DCRTPoly>& X,
@@ -114,7 +182,7 @@ public:
         }
         std::vector<double> msk(FEATURE_DIM*FEATURE_DIM, 1.0);
         rebatched_XtX = m_cc->EvalMult(rebatched_XtX, 
-            m_cc->MakeCKKSPackedPlaintext(msk));
+            m_cc->MakeCKKSPackedPlaintext(msk, 1, 0, nullptr, SAMPLE_DIM * SAMPLE_DIM));
 
         for(int i = 0; i < log2((SAMPLE_DIM*SAMPLE_DIM)/(FEATURE_DIM*FEATURE_DIM)); i++) {
             m_cc->EvalAddInPlace(rebatched_XtX, 
@@ -126,7 +194,7 @@ public:
 
         int s2 = std::min(FEATURE_DIM, m_maxBatch / FEATURE_DIM /FEATURE_DIM);
         auto step2_start = high_resolution_clock::now();
-        auto inv_XtX = eval_inverse(rebatched_XtX, FEATURE_DIM, s2, 20);
+        auto inv_XtX = eval_inverse(rebatched_XtX, s2, FEATURE_DIM, 18);
         logIntermediateResult("Inverse of XtX", inv_XtX, logFile);
         auto step2_end = high_resolution_clock::now();
 
@@ -135,11 +203,41 @@ public:
         logIntermediateResult("Final Xty", Xty, logFile);
         auto step3_end = high_resolution_clock::now();
 
+        // Step 4: Final weight computation
         auto step4_start = high_resolution_clock::now();
-        m_weights = eval_mult(inv_XtX, Xty, FEATURE_DIM, s2);
+        auto res = m_cc->EvalMult(inv_XtX, Xty);
+        res->SetSlots(FEATURE_DIM * FEATURE_DIM);
+        logIntermediateResult("res", res, logFile);
+        m_weights = res->Clone();
+
+        for(int i=1; i<FEATURE_DIM; i++){
+            std::vector<double> column_sum_msk;
+            for(int j=0; j<FEATURE_DIM; j++){
+                for(int k=0; k<FEATURE_DIM; k++){
+                    if(k<FEATURE_DIM-i)
+                        column_sum_msk.push_back(1);
+                    else
+                        column_sum_msk.push_back(0);
+                }    
+            }
+            m_cc->EvalAddInPlace(m_weights, m_cc->EvalMult(rot.rotate(res, i), m_cc->MakeCKKSPackedPlaintext(column_sum_msk, 1, 0, nullptr, FEATURE_DIM*FEATURE_DIM))); 
+        }
+
+        for(int i=1; i<FEATURE_DIM; i++){
+            std::vector<double> column_sum_msk;
+            for(int j=0; j<FEATURE_DIM; j++){
+                for(int k=0; k<FEATURE_DIM; k++){
+                    if(k<i)
+                        column_sum_msk.push_back(0);
+                    else
+                        column_sum_msk.push_back(1);
+                }    
+            }
+            m_cc->EvalAddInPlace(m_weights,  m_cc->EvalMult(rot.rotate(res, -i), m_cc->MakeCKKSPackedPlaintext(column_sum_msk, 1, 0, nullptr, FEATURE_DIM*FEATURE_DIM)));
+        }
         logIntermediateResult("Final Weights", m_weights, logFile);
         auto step4_end = high_resolution_clock::now();
-
+        std::cout << std::endl;
         logFile.close();
         
         return {
@@ -161,7 +259,7 @@ public:
         std::cout << "\n=== " << label << " ===\n";
         outFile << "Number of slots: " << cipher->GetSlots() << "\n";
         outFile << "First 10 elements: \n";
-        for (int i = 0; i < std::min(10, (int)result_vec.size()); i++) {
+        for (int i = 0; i < 10; i++) {
             outFile << std::setprecision(6) << std::fixed 
                    << result_vec[i] << " ";
             std::cout << std::setprecision(6) << std::fixed 

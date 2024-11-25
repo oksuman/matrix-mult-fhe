@@ -5,6 +5,7 @@
 class LinearRegression_NewCol : public LinearRegressionBase {
 private:
     const int m_maxBatch;
+    const int m_multDepth;
 
     std::vector<double> generateMaskVector(int batch_size, int k, int d) {
         std::vector<double> result(batch_size, 0.0);
@@ -75,26 +76,26 @@ private:
         return result;
     }
 
-    // Ciphertext<DCRTPoly>
-    // vecRotsOpt(const std::vector<Ciphertext<DCRTPoly>> &matrixM, int is, int d) {
-    //     auto rotsM = this->getZeroCiphertext(d)->Clone();
-    //     for (int j = 0; j < m_s / m_np; j++) {
+    Ciphertext<DCRTPoly>
+    vecRotsOpt(const std::vector<Ciphertext<DCRTPoly>> &matrixM, int is, int s, int np, int d) {
+        auto rotsM = this->getZeroCiphertext(d)->Clone();
+        for (int j = 0; j < s / np; j++) {
 
-    //         auto T = this->getZeroCiphertext(d)->Clone();
+            auto T = this->getZeroCiphertext(d)->Clone();
 
-    //         for (int i = 0; i < m_np; i++) {
-    //             auto msk = generateMaskVector(m_numSlots, m_np * j + i, d);
-    //             msk = vectorRotate(msk, -is * d * m_s - j * d * m_np);
+            for (int i = 0; i < np; i++) {
+                auto msk = generateMaskVector(d*d*s, np * j + i, d);
+                msk = vectorRotate(msk, -is * d * s - j * d * np);
 
-    //             auto pmsk = m_cc->MakeCKKSPackedPlaintext(msk, 1, 0, nullptr,
-    //                                                       m_numSlots);
-    //             m_cc->EvalAddInPlace(T, m_cc->EvalMult(matrixM[i], pmsk));
-    //         }
-    //         m_cc->EvalAddInPlace(rotsM, rot.rotate(T, is * d * m_s + j * d * m_np));
-    //     }
+                auto pmsk = m_cc->MakeCKKSPackedPlaintext(msk, 1, 0, nullptr,
+                                                          d*d*s);
+                m_cc->EvalAddInPlace(T, m_cc->EvalMult(matrixM[i], pmsk));
+            }
+            m_cc->EvalAddInPlace(rotsM, rot.rotate(T, is * d * s + j * d * np));
+        }
 
-    //     return rotsM;
-    // }
+        return rotsM;
+    }
 
     Ciphertext<DCRTPoly> vecRots(const Ciphertext<DCRTPoly> &matrixM, int is, int s, int d) {
         auto rotsM = this->getZeroCiphertext(d)->Clone();
@@ -123,19 +124,21 @@ private:
 
         auto matrixC = this->getZeroCiphertext(d)->Clone();
         Ciphertext<DCRTPoly> babyStepsOfA[nb1];
-        // std::vector<Ciphertext<DCRTPoly>> babyStepsOfB;
+        std::vector<Ciphertext<DCRTPoly>> babyStepsOfB;
 
         // nb rotations required
         for (int i = 0; i < nb1; i++) {
             babyStepsOfA[i] = rot.rotate(matrixA, i);
         }
+        for (int i = 0; i < np1; i++) {
+            auto t = rot.rotate(matrixB, i * d);
+            t->SetSlots(d*d*s1);
+            babyStepsOfB.push_back(t);
+        }
 
         for (int i = 0; i < B1; i++) {
-            auto batched_rotations_B = vecRots(matrixB, i, s1, d);
-            // logIntermediateResult("batched_rotations_B", batched_rotations_B, logFile);
-            
+            auto batched_rotations_B = vecRotsOpt(babyStepsOfB, i, s1, np1, d);
             auto diagA = this->getZeroCiphertext(d)->Clone();
-            
             for (int k = -ng1; k < ng1; k++) {
                 if (k < 0) {
                     auto tmp = this->getZeroCiphertext(d)->Clone();
@@ -202,17 +205,23 @@ private:
 
         auto Y = this->m_cc->EvalMult(pI, trace_reciprocal);
         auto A_bar = this->m_cc->EvalSub(pI, this->m_cc->EvalMultAndRelinearize(M, trace_reciprocal));
-    
+        logIntermediateResult("Y", Y, logFile);
         for (int i = 0; i < r - 1; i++) {
-            // if (d >= 8 && (int)Y->GetLevel() >= this->depth - 2) {
-            //     A_bar = m_cc->EvalBootstrap(A_bar, 2, 17);
-            //     Y = m_cc->EvalBootstrap(Y, 2, 17);
-            // }
             Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar), s, B, ng, nb, np, d);
             A_bar = this->eval_mult(A_bar, A_bar, s, B, ng, nb, np, d);
+            logIntermediateResult("Y", Y, logFile);
             std::cout << "i: " << i << std::endl;
+            std::cout << "level: " << Y->GetLevel() << std::endl;
+            if ((int)Y->GetLevel() >= this->m_multDepth - 2) {
+                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+                Y = m_cc->EvalBootstrap(Y, 2, 18);
+            }
         }
         Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar), s, B, ng, nb, np, d);
+        std::cout << "last level: " << Y->GetLevel() << std::endl;
+        if ((int)Y->GetLevel() >= this->m_multDepth - 2) {
+                Y = m_cc->EvalBootstrap(Y, 2, 18);
+        }
         return Y;
     }
     
@@ -243,9 +252,11 @@ public:
     LinearRegression_NewCol(std::shared_ptr<Encryption> enc,
                            CryptoContext<DCRTPoly> cc,
                            KeyPair<DCRTPoly> keyPair,
-                           std::vector<int> rotIndices)
+                           std::vector<int> rotIndices,
+                           int multDepth)
         : LinearRegressionBase(enc, cc, keyPair, rotIndices)
         , m_maxBatch(cc->GetRingDimension() / 2)
+        , m_multDepth(multDepth)
     {}
 
     TimingResult trainWithTimings(const Ciphertext<DCRTPoly>& X,
@@ -264,9 +275,9 @@ public:
 
         int s1 = std::min(SAMPLE_DIM, m_maxBatch / SAMPLE_DIM /SAMPLE_DIM);
         int B1 = SAMPLE_DIM / s1; 
-        int ng1 = 1; 
-        int nb1 = 64;
-        int np1 = 0; 
+        int ng1 = 4; 
+        int nb1 = 16;
+        int np1 = 8; 
 
         auto step1_start = high_resolution_clock::now();
         auto Xt = eval_transpose(X, SAMPLE_DIM);
@@ -300,9 +311,9 @@ public:
         int B2 = FEATURE_DIM / s2; 
         int ng2 = 2; 
         int nb2 = 4;
-        int np2 = 0; 
+        int np2 = 2; 
         auto step2_start = high_resolution_clock::now();
-        auto inv_XtX = eval_inverse(rebatched_XtX, s2, B2, ng2, nb2, np2, FEATURE_DIM, 20);
+        auto inv_XtX = eval_inverse(rebatched_XtX, s2, B2, ng2, nb2, np2, FEATURE_DIM, 18);
         logIntermediateResult("Inverse of XtX", inv_XtX, logFile);
         auto step2_end = high_resolution_clock::now();
 

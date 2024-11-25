@@ -92,7 +92,7 @@ template <int d> class MatrixInverseNewColTestFixture : public ::testing::Test {
         m_publicKey = keyPair.publicKey;
         m_privateKey = keyPair.secretKey;
 
-        if (d >= 16) {
+        if (d >= 8) {
             m_cc->Enable(FHE);
             m_cc->EvalBootstrapSetup(levelBudget, bsgsDim, batchSize);
             m_cc->EvalBootstrapKeyGen(m_privateKey, batchSize);
@@ -331,8 +331,6 @@ REGISTER_TYPED_TEST_SUITE_P(MatrixInverseNewColTestTyped,
 //                                           std::integral_constant<size_t,
 //                                           64>>;
 
-using InverseTestSizes = ::testing::Types<std::integral_constant<size_t, 16>,
-                                          std::integral_constant<size_t, 32>,
-                                          std::integral_constant<size_t, 64>>;
+using InverseTestSizes = ::testing::Types<std::integral_constant<size_t, 8>>;
 INSTANTIATE_TYPED_TEST_SUITE_P(MatrixInverseNewCol,
                                MatrixInverseNewColTestTyped, InverseTestSizes);

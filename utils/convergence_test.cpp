@@ -2,6 +2,7 @@
 #include <random>
 #include <iostream>
 #include <fstream>
+#include <sstream> 
 #include <cmath>
 #include <algorithm>
 #include <limits>

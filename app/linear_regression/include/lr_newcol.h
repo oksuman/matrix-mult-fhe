@@ -187,38 +187,27 @@ private:
     }
 
     Ciphertext<DCRTPoly> eval_inverse(const Ciphertext<DCRTPoly> &M, int s, int B, int ng, int nb, int np, int d, int r) {
-        std::ofstream logFile("intermediate_results.txt");
-        logIntermediateResult("XtX in inverse", M, logFile);
-
         std::vector<double> vI = this->initializeIdentityMatrix(d);
         Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI, 1, 0, nullptr, d*d);
 
         auto trace = this->eval_trace(M, d, d*d);
-        logIntermediateResult("trace", trace, logFile);
-
         auto trace_reciprocal =
             this->m_cc->EvalDivide(trace, 350, 355, 5);
-        logIntermediateResult("1/trace", trace_reciprocal, logFile);
- 
+
 
         auto Y = this->m_cc->EvalMult(pI, trace_reciprocal);
         auto A_bar = this->m_cc->EvalSub(pI, this->m_cc->EvalMultAndRelinearize(M, trace_reciprocal));
 
-        logIntermediateResult("Y", Y, logFile);
         for (int i = 0; i < r - 1; i++) {
-            logIntermediateResult("Y", Y, logFile);
-            logIntermediateResult("A", A_bar, logFile);
+
             Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar), s, B, ng, nb, np, d);
             A_bar = this->eval_mult(A_bar, A_bar, s, B, ng, nb, np, d);
-            std::cout << "i: " << i << std::endl;
-            std::cout << "level: " << Y->GetLevel() << std::endl;
             if ((int)Y->GetLevel() >= this->m_multDepth - 2) {
                 A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
                 Y = m_cc->EvalBootstrap(Y, 2, 18);
             }
         }
         Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar), s, B, ng, nb, np, d);
-        std::cout << "last level: " << Y->GetLevel() << std::endl;
         if ((int)Y->GetLevel() >= this->m_multDepth - 2) {
                 Y = m_cc->EvalBootstrap(Y, 2, 18);
         }
@@ -262,17 +251,11 @@ public:
     TimingResult trainWithTimings(const Ciphertext<DCRTPoly>& X,
                                  const Ciphertext<DCRTPoly>& y) override {
         using namespace std::chrono;
-        
-        std::ofstream logFile("intermediate_results.txt");
-        logFile << "=== Linear Regression Intermediate Results ===\n";
      
         int SAMPLE_DIM = 64;
         int FEATURE_DIM = 8;
 
         // Step 1: X^tX
-        logFile << "\nAfter X multiplication:\n";
-        logIntermediateResult("X", X, logFile);
-
         int s1 = std::min(SAMPLE_DIM, m_maxBatch / SAMPLE_DIM /SAMPLE_DIM);
         int B1 = SAMPLE_DIM / s1; 
         int ng1 = 4; 
@@ -281,11 +264,7 @@ public:
 
         auto step1_start = high_resolution_clock::now();
         auto Xt = eval_transpose(X, SAMPLE_DIM, SAMPLE_DIM * SAMPLE_DIM);
-        logFile << "\nAfter Xt multiplication:\n";
-        logIntermediateResult("Xt", Xt, logFile);
         auto XtX = eval_mult(Xt, X, s1, B1, ng1, nb1, np1, SAMPLE_DIM);
-        logFile << "\nAfter X^TX multiplication:\n";
-        logIntermediateResult("XtX", XtX, logFile);
 
         // re-batch
         auto rebatched_XtX = XtX->Clone();
@@ -302,8 +281,6 @@ public:
                 rot.rotate(rebatched_XtX, -SAMPLE_DIM*(1<<i)));
         }
         rebatched_XtX->SetSlots(FEATURE_DIM*FEATURE_DIM);
-        logIntermediateResult("Rebatched XtX", rebatched_XtX, logFile);
-        std::cout << "end" << std::endl;
         auto step1_end = high_resolution_clock::now();
 
         // Step 2: Matrix inverse
@@ -314,20 +291,17 @@ public:
         int np2 = 2; 
         auto step2_start = high_resolution_clock::now();
         auto inv_XtX = eval_inverse(rebatched_XtX, s2, B2, ng2, nb2, np2, FEATURE_DIM, 18);
-        logIntermediateResult("Inverse of XtX", inv_XtX, logFile);
         auto step2_end = high_resolution_clock::now();
 
         // Step 3: X^ty
         auto step3_start = high_resolution_clock::now();
         auto Xty = computeXty(Xt, y, FEATURE_DIM, SAMPLE_DIM);
-        logIntermediateResult("Final Xty", Xty, logFile);
         auto step3_end = high_resolution_clock::now();
 
         // Step 4: Final weight computation
         auto step4_start = high_resolution_clock::now();
         auto res = m_cc->EvalMult(inv_XtX, Xty);
         res->SetSlots(FEATURE_DIM * FEATURE_DIM);
-        logIntermediateResult("res", res, logFile);
         m_weights = res->Clone();
 
         for(int i=1; i<FEATURE_DIM; i++){
@@ -356,10 +330,8 @@ public:
             m_cc->EvalAddInPlace(m_weights,  m_cc->EvalMult(rot.rotate(res, -i), m_cc->MakeCKKSPackedPlaintext(column_sum_msk, 1, 0, nullptr, FEATURE_DIM*FEATURE_DIM)));
         }
         // m_weights->SetSlots(FEATURE_DIM);
-        logIntermediateResult("Final Weights", m_weights, logFile);
         auto step4_end = high_resolution_clock::now();
         std::cout << std::endl;
-        logFile.close();
         
         return {
             step1_end - step1_start,

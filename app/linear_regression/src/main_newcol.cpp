@@ -9,7 +9,7 @@
 // const int SAMPLE_DIM = 64;
 
 int main() {
-    int multDepth = 35; 
+    int multDepth = 29; 
     uint32_t scaleModSize = 59;
     uint32_t firstModSize = 60;
     
@@ -40,7 +40,7 @@ int main() {
 
     // Setup rotation keys
     std::vector<int> rotations;
-    for (int i = 1; i < cc->GetRingDimension() / 2; i *= 2) {
+    for (int i = 1; i < 1<<16; i *= 2) {
         rotations.push_back(i);
         rotations.push_back(-i);
     }

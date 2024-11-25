@@ -193,8 +193,6 @@ private:
         std::vector<double> vI = this->initializeIdentityMatrix(d);
         Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI, 1, 0, nullptr, d*d);
 
-        std::cout << "start trace" << std::endl;
-
         auto trace = this->eval_trace(M, d, d*d);
         logIntermediateResult("trace", trace, logFile);
 
@@ -205,11 +203,13 @@ private:
 
         auto Y = this->m_cc->EvalMult(pI, trace_reciprocal);
         auto A_bar = this->m_cc->EvalSub(pI, this->m_cc->EvalMultAndRelinearize(M, trace_reciprocal));
+
         logIntermediateResult("Y", Y, logFile);
         for (int i = 0; i < r - 1; i++) {
+            logIntermediateResult("Y", Y, logFile);
+            logIntermediateResult("A", A_bar, logFile);
             Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar), s, B, ng, nb, np, d);
             A_bar = this->eval_mult(A_bar, A_bar, s, B, ng, nb, np, d);
-            logIntermediateResult("Y", Y, logFile);
             std::cout << "i: " << i << std::endl;
             std::cout << "level: " << Y->GetLevel() << std::endl;
             if ((int)Y->GetLevel() >= this->m_multDepth - 2) {
@@ -236,11 +236,11 @@ private:
         std::cout << "\n=== " << label << " ===\n";
         outFile << "Number of slots: " << cipher->GetSlots() << "\n";
         outFile << "First 10 elements: \n";
-        for (int i = 0; i < std::min(10, (int)result_vec.size()); i++) {
+        for (int i = 0; i < std::min(20, (int)result_vec.size()); i++) {
             outFile << std::setprecision(6) << std::fixed 
                    << result_vec[i] << " ";
         }
-        for (int i = 0; i < std::min(10, (int)result_vec.size()); i++) {
+        for (int i = 0; i < std::min(20, (int)result_vec.size()); i++) {
             std::cout << std::setprecision(6) << std::fixed 
                    << result_vec[i] << " ";
         }
@@ -280,7 +280,7 @@ public:
         int np1 = 8; 
 
         auto step1_start = high_resolution_clock::now();
-        auto Xt = eval_transpose(X, SAMPLE_DIM);
+        auto Xt = eval_transpose(X, SAMPLE_DIM, SAMPLE_DIM * SAMPLE_DIM);
         logFile << "\nAfter Xt multiplication:\n";
         logIntermediateResult("Xt", Xt, logFile);
         auto XtX = eval_mult(Xt, X, s1, B1, ng1, nb1, np1, SAMPLE_DIM);

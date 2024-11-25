@@ -30,9 +30,13 @@ private:
                                   const Ciphertext<DCRTPoly>& matB, 
                                   int d, int s) {
         int B = d / s;
-        auto matrixC = getZeroCiphertext(d)->Clone();
+        int num_slots = d*d*s;
+
+        auto matrixC = getZeroCiphertext(num_slots)->Clone();
         auto matrixA = matA->Clone();
         auto matrixB = matB->Clone();
+        matA->SetSlots(d*d*s);
+        matB->SetSlots(d*d*s);
 
         std::vector<Ciphertext<DCRTPoly>> Tilde_A(B);
         std::vector<Ciphertext<DCRTPoly>> Tilde_B(B);
@@ -47,7 +51,7 @@ private:
         }
 
         for (int i = 0; i < B; i++) {
-            auto phi_si = m_cc->MakeCKKSPackedPlaintext(generatePhiMsk(s * i, d, s));
+            auto phi_si = m_cc->MakeCKKSPackedPlaintext(generatePhiMsk(s * i, d, s), 1, 0, nullptr, num_slots);
             auto tmp = m_cc->EvalMult(matrixA, phi_si);
             tmp = rot.rotate(tmp, s * i);
             for (int j = 0; j < log2(d); j++) {
@@ -57,7 +61,7 @@ private:
         }
 
         for (int i = 0; i < B; i++) {
-            auto psi_si = m_cc->MakeCKKSPackedPlaintext(generatePsiMsk(s * i, d, s));
+            auto psi_si = m_cc->MakeCKKSPackedPlaintext(generatePsiMsk(s * i, d, s), 1, 0, nullptr, num_slots);
             auto tmp = m_cc->EvalMult(matrixB, psi_si);
             tmp = rot.rotate(tmp, s * i * d);
             for (int j = 0; j < log2(d); j++) {
@@ -74,7 +78,6 @@ private:
         for (int i = 0; i < log2(s); i++) {
             m_cc->EvalAddInPlace(matrixC, rot.rotate(matrixC, (d * d) * (1 << i)));
         }
-        matrixC->SetSlots(d * d);
         return matrixC;
     }
 
@@ -93,7 +96,9 @@ private:
         std::cout << std::endl;
         std::cout << "start inversion" << std::endl;
         std::vector<double> vI = this->initializeIdentityMatrix(d);
+        std::vector<double> vI2 = this->initializeIdentityMatrix2(d, d*d*s);
         Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI, 1, 0, nullptr, d*d);
+        Plaintext pI2 = this->m_cc->MakeCKKSPackedPlaintext(vI2, 1, 0, nullptr, d*d*s);
 
         std::ofstream logFile("intermediate_results.txt");
         auto trace = this->eval_trace(M, d, d * d);
@@ -104,6 +109,11 @@ private:
 
         auto Y = this->m_cc->EvalMult(pI, trace_reciprocal);
         auto A_bar = this->m_cc->EvalSub(pI, this->m_cc->EvalMultAndRelinearize(M, trace_reciprocal));
+        std::cout << "Slots of Y: " << Y->GetSlots() << std::endl;
+        std::cout << "Slots of A_bar: " << A_bar->GetSlots() << std::endl;
+        logIntermediateResult("Y", Y, logFile);
+        logIntermediateResult("A_bar", A_bar, logFile);
+
         Y->SetSlots(d*d*s);
         A_bar->SetSlots(d*d*s);
         Y = this->clean(Y, s, d);
@@ -111,13 +121,26 @@ private:
 
         std::cout << std::endl; 
         std::cout << "start loop" << std::endl;
-        std::cout << "d: " << d << std::endl;
+ 
+        std::cout << "Slots of Y: " << Y->GetSlots() << std::endl;
+        std::cout << "Slots of A_bar: " << A_bar->GetSlots() << std::endl;
         logIntermediateResult("Y", Y, logFile);
+        logIntermediateResult("A_bar", A_bar, logFile);
         for (int i = 0; i < r - 1; i++) {
-            Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar), d, s);
+            std::cout << "Slots of Y: " << Y->GetSlots() << std::endl;
+            std::cout << "Slots of A_bar: " << A_bar->GetSlots() << std::endl;
+
+            Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI2, A_bar), d, s);
             A_bar = this->eval_mult(A_bar, A_bar, d, s);
 
+            std::cout << "i: " << i << std::endl;
+            std::cout << "level: " << (int)Y->GetLevel() << std::endl;
+ 
+            std::cout << "Slots of Y: " << Y->GetSlots() << std::endl;
+            std::cout << "Slots of A_bar: " << A_bar->GetSlots() << std::endl;
             logIntermediateResult("Y", Y, logFile);
+            logIntermediateResult("A_bar", A_bar, logFile);
+
             if ((int)Y->GetLevel() >= this->m_multDepth - 3) {
                 A_bar->SetSlots(d * d);
                 A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
@@ -129,23 +152,22 @@ private:
                 Y->SetSlots(d * d * s);
                 Y = this->clean(Y, s, d);
             } else {
+                A_bar->SetSlots(d * d * s);
                 A_bar = this->clean(A_bar, s, d);
+                Y->SetSlots(d * d * s);
                 Y = this->clean(Y, s, d);
             }
-            std::cout << "i: " << i << std::endl;
-            std::cout << "level: " << (int)Y->GetLevel() << std::endl;
         }
-        Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar), d, s);
-        if ((int)Y->GetLevel() >= this->m_multDepth - 2) {
-            Y->SetSlots(d * d);
-            Y = m_cc->EvalBootstrap(Y, 2, 18);
-        }
+        Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI2, A_bar), d, s);
+        Y->SetSlots(d * d);
+
         return Y;
     }
 
-    Ciphertext<DCRTPoly> getZeroCiphertext(int d) {
-        std::vector<double> zeroVec(d * d, 0.0);
-        return m_enc->encryptInput(zeroVec);
+    Ciphertext<DCRTPoly> getZeroCiphertext(int batchSize) {
+        std::vector<double> zeroVec(batchSize, 0.0);
+        auto zeroPtx = this->m_cc->MakeCKKSPackedPlaintext(zeroVec, 1, 0, nullptr, batchSize);
+        return this->m_cc->Encrypt(zeroPtx, this->m_keyPair.publicKey);
     }
 
 public:
@@ -169,7 +191,7 @@ public:
         int s1 = std::min(SAMPLE_DIM, m_maxBatch / SAMPLE_DIM /SAMPLE_DIM);
 
         auto step1_start = high_resolution_clock::now();
-        auto Xt = eval_transpose(X, SAMPLE_DIM);
+        auto Xt = eval_transpose(X, SAMPLE_DIM, 1<<16);
         logIntermediateResult("Xt", Xt, logFile);
         auto XtX = eval_mult(Xt, X, SAMPLE_DIM, s1);
         XtX->SetSlots(SAMPLE_DIM*SAMPLE_DIM);
@@ -199,6 +221,14 @@ public:
         auto step2_end = high_resolution_clock::now();
 
         auto step3_start = high_resolution_clock::now();
+        for(int i=0; i<std::log2(s1); i++){
+            this->m_cc->EvalAddInPlace(Xt, rot.rotate(Xt, -(SAMPLE_DIM*SAMPLE_DIM)*(1<<i)));
+        }
+        Xt->SetSlots(SAMPLE_DIM * SAMPLE_DIM);
+        logIntermediateResult("Xt", Xt, logFile);
+        std::cout << "slots of Xt: " << Xt->GetSlots() << std::endl;
+        logIntermediateResult("y", y, logFile);
+        std::cout << "slots of y: " << y->GetSlots() << std::endl;
         auto Xty = computeXty(Xt, y, FEATURE_DIM, SAMPLE_DIM);
         logIntermediateResult("Final Xty", Xty, logFile);
         auto step3_end = high_resolution_clock::now();
@@ -259,9 +289,7 @@ public:
         std::cout << "\n=== " << label << " ===\n";
         outFile << "Number of slots: " << cipher->GetSlots() << "\n";
         outFile << "First 10 elements: \n";
-        for (int i = 0; i < 10; i++) {
-            outFile << std::setprecision(6) << std::fixed 
-                   << result_vec[i] << " ";
+        for (int i = 0; i < 64; i++) {
             std::cout << std::setprecision(6) << std::fixed 
                    << result_vec[i] << " ";
         }

@@ -77,18 +77,18 @@ protected:
         return msk;
     }
 
-    Ciphertext<DCRTPoly> eval_transpose(Ciphertext<DCRTPoly> M, int d) {
-        auto p = m_cc->MakeCKKSPackedPlaintext(generateTransposeMask(0, d));
+    Ciphertext<DCRTPoly> eval_transpose(Ciphertext<DCRTPoly> M, int d, int batchSize) {
+        auto p = m_cc->MakeCKKSPackedPlaintext(generateTransposeMask(0, d), 1, 0, nullptr, batchSize);
         auto M_transposed = m_cc->EvalMult(M, p);
 
         for (int i = 1; i < d; i++) {
-            p = m_cc->MakeCKKSPackedPlaintext(generateTransposeMask(i, d));
+            p = m_cc->MakeCKKSPackedPlaintext(generateTransposeMask(i, d), 1, 0, nullptr, batchSize);
             m_cc->EvalAddInPlace(M_transposed,
                                 m_cc->EvalMult(rot.rotate(M, (d - 1) * i), p));
         }
 
         for (int i = -1; i > -d; i--) {
-            p = m_cc->MakeCKKSPackedPlaintext(generateTransposeMask(i, d));
+            p = m_cc->MakeCKKSPackedPlaintext(generateTransposeMask(i, d), 1, 0, nullptr, batchSize);
             m_cc->EvalAddInPlace(M_transposed,
                                 m_cc->EvalMult(rot.rotate(M, (d - 1) * i), p));
         }
@@ -109,7 +109,7 @@ protected:
         // Multiply with X^t
         result = m_cc->EvalMultAndRelinearize(Xt, result);
         
-        result = eval_transpose(result, SAMPLE_DIM);
+        result = eval_transpose(result, SAMPLE_DIM, SAMPLE_DIM * SAMPLE_DIM);
 
         // Sum rows of result
         for(int i = 0; i < log2(SAMPLE_DIM); i++) {
@@ -128,6 +128,13 @@ protected:
 
     virtual std::vector<double> initializeIdentityMatrix(size_t dim) {
         std::vector<double> identity(dim * dim, 0.0);
+        for (size_t i = 0; i < dim; i++) {
+            identity[i * dim + i] = 1.0;
+        }
+        return identity;
+    }
+    virtual std::vector<double> initializeIdentityMatrix2(size_t dim, int batchSize) {
+        std::vector<double> identity(batchSize, 0.0);
         for (size_t i = 0; i < dim; i++) {
             identity[i * dim + i] = 1.0;
         }

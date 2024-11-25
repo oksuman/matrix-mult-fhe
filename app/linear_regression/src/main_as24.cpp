@@ -58,7 +58,7 @@ int main() {
     
     // Encrypt data
     auto X = cc->Encrypt(keyPair.publicKey, cc->MakeCKKSPackedPlaintext(features));
-    auto y = cc->Encrypt(keyPair.publicKey, cc->MakeCKKSPackedPlaintext(outcomes));
+    auto y = cc->Encrypt(keyPair.publicKey, cc->MakeCKKSPackedPlaintext(outcomes,  1, 0, nullptr, SAMPLE_DIM * SAMPLE_DIM));
 
     // Open files for results
     std::ofstream timingFile("as24_timing.txt");

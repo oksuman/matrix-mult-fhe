@@ -39,7 +39,7 @@ Benchmarks for matrix inversion algorithms.
 - NewCol
 - NewRow
 - DP (Diagonal Packing Method)
-- 
+  
 ## Build Instructions
 
 1. Create and navigate to build directory:

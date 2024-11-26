@@ -13,7 +13,8 @@ Benchmarks for single matrix multiplication operations, comparing different algo
 - AS24 (Indocrypt'24)
 - NewCol
 - NewRow
-
+- DP (Diagonal Packing Method)
+  
 ### 2. Deep Matrix Multiplication (`deep_multiplication/`)
 Benchmarks for repeated matrix squaring operations (A -> A^2 -> A^4 -> A^8 -> ...), comparing different algorithms:
 - JKLS18 (CCS'18)
@@ -23,12 +24,22 @@ Benchmarks for repeated matrix squaring operations (A -> A^2 -> A^4 -> A^8 -> ..
 - AS24 (Indocrypt'24)
 - NewCol
 - NewRow
+- DP (Diagonal Packing Method)
 
 Each algorithm performs 10 rounds of squaring operations with increased multiplicative depth.
 
-### 3. Matrix Inversion (`inversion/`) [Coming Soon]
+### 3. Matrix Inversion (`inversion/`) 
 Benchmarks for matrix inversion algorithms.
-
+- Naive Approach
+- JKLS18 (CCS'18)
+- RT22 (CCSW'22)
+  - Regular multiplication for matrices up to 32x32
+  - Strassen algorithm for 64x64 matrices using 32x32 blocks
+- AS24 (Indocrypt'24)
+- NewCol
+- NewRow
+- DP (Diagonal Packing Method)
+  
 ## Build Instructions
 
 1. Create and navigate to build directory:
@@ -50,7 +61,7 @@ make
 This will build all benchmark executables in their respective directories:
 - `build/benchmark/single_multiplication/`
 - `build/benchmark/deep_multiplication/`
-- `build/benchmark/inversion/` (future)
+- `build/benchmark/inversion/`
 
 ## Running Benchmarks
 

@@ -100,7 +100,5 @@ static void BM_Diag_Inversion(benchmark::State& state) {
 BENCHMARK_TEMPLATE(BM_Diag_Inversion, 4)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
 BENCHMARK_TEMPLATE(BM_Diag_Inversion, 8)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
 BENCHMARK_TEMPLATE(BM_Diag_Inversion, 16)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
-BENCHMARK_TEMPLATE(BM_Diag_Inversion, 32)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
-BENCHMARK_TEMPLATE(BM_Diag_Inversion, 64)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
 
 BENCHMARK_MAIN();

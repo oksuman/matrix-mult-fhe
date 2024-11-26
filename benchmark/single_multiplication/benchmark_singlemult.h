@@ -71,7 +71,6 @@ struct SetupOutput {
 
 template <int d>
 auto setupRT22() -> SetupOutput<d> {
-    // Original setup code
     CCParams<CryptoContextCKKSRNS> parameters;
     parameters.SetMultiplicativeDepth(2);
     parameters.SetScalingModSize(50);
@@ -153,7 +152,7 @@ auto setupRT22() -> SetupOutput<d> {
 template <int d>
 auto setupAS24() {
     CCParams<CryptoContextCKKSRNS> parameters;
-    parameters.SetMultiplicativeDepth(30);
+    parameters.SetMultiplicativeDepth(2);
     parameters.SetScalingModSize(50);
     parameters.SetSecurityLevel(HEStd_128_classic);
 
@@ -201,7 +200,7 @@ auto setupAS24() {
 template <int d>
 auto setupNewCol() {
     CCParams<CryptoContextCKKSRNS> parameters;
-    parameters.SetMultiplicativeDepth(30);
+    parameters.SetMultiplicativeDepth(2);
     parameters.SetScalingModSize(50);
     parameters.SetSecurityLevel(HEStd_128_classic);
 

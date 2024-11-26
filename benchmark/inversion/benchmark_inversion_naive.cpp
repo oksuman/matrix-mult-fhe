@@ -84,6 +84,4 @@ static void BM_Naive_Inversion(benchmark::State& state) {
 // Register benchmarks for different matrix sizes
 BENCHMARK_TEMPLATE(BM_Naive_Inversion, 4)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
 BENCHMARK_TEMPLATE(BM_Naive_Inversion, 8)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
-BENCHMARK_TEMPLATE(BM_Naive_Inversion, 16)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
-
 BENCHMARK_MAIN();

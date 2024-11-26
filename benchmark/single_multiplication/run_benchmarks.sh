@@ -9,7 +9,7 @@ run_benchmark() {
     
     # Add cooling period
     echo "System cooling before $algo..."
-    sleep 15
+    sleep 45
     sync
     
     # Run benchmark with direct console output
@@ -22,12 +22,19 @@ run_benchmark() {
     
     # Additional cooling period
     echo "System cooling after $algo..."
-    sleep 15
+    sleep 45
     
     echo "" >> benchmark_results.txt
 }
 
-ALGORITHMS=("benchmark_jkls18" "benchmark_rt22" "benchmark_as24" "benchmark_newcol" "benchmark_newrow" "benchmark_diag")
+ALGORITHMS=(
+    "benchmark_newcol" 
+    "benchmark_newrow" 
+    "benchmark_as24" 
+    "benchmark_jkls18" 
+    "benchmark_rt22" 
+    "benchmark_diag"
+)
 
 # Initialize result file with header
 cat > benchmark_results.txt << EOL

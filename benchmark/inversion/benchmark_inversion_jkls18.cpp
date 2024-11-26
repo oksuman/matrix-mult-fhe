@@ -124,8 +124,8 @@ static void BM_JKLS18_Inversion(benchmark::State& state) {
     }
 }
 
-// BENCHMARK_TEMPLATE(BM_JKLS18_Inversion, 4)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
-// BENCHMARK_TEMPLATE(BM_JKLS18_Inversion, 8)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
+BENCHMARK_TEMPLATE(BM_JKLS18_Inversion, 4)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
+BENCHMARK_TEMPLATE(BM_JKLS18_Inversion, 8)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
 BENCHMARK_TEMPLATE(BM_JKLS18_Inversion, 16)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
 BENCHMARK_TEMPLATE(BM_JKLS18_Inversion, 32)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
 BENCHMARK_TEMPLATE(BM_JKLS18_Inversion, 64)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);

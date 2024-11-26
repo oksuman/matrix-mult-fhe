@@ -29,12 +29,12 @@ run_benchmark() {
 
 # List of squaring benchmark executables
 SQUARING_ALGORITHMS=(
+    "benchmark_squaring_newcol"
+    "benchmark_squaring_newrow"
+    "benchmark_squaring_as24"
     "benchmark_squaring_jkls18"
     "benchmark_squaring_rt22"
     "benchmark_squaring_diag"
-    "benchmark_squaring_as24"
-    "benchmark_squaring_newcol"
-    "benchmark_squaring_newrow"
 )
 
 # Initialize result file

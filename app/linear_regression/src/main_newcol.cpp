@@ -9,7 +9,7 @@
 // const int SAMPLE_DIM = 64;
 
 int main() {
-    int multDepth = 29; 
+    int multDepth = 31; 
     uint32_t scaleModSize = 59;
     uint32_t firstModSize = 60;
     
@@ -21,8 +21,6 @@ int main() {
 
     parameters.SetBatchSize(SAMPLE_DIM * SAMPLE_DIM);
     parameters.SetSecurityLevel(HEStd_128_classic);
-    // parameters.SetSecurityLevel(HEStd_NotSet);
-    // parameters.SetRingDim(1<<17);
 
     std::vector<uint32_t> levelBudget = {4, 5};
     std::vector<uint32_t> bsgsDim = {0, 0};
@@ -82,7 +80,7 @@ int main() {
     timingFile.close();
 
     // Calculate and record MSE
-    double mse = lr.inferenceAndCalculateMSE("data/testSet.csv");
+    double mse = lr.inferenceAndCalculateMSE("data/testSet.csv", "newcol_mse_result.txt");
     std::cout << "mse: " << mse << std::endl;
     return 0;
 }

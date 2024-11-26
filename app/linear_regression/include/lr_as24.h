@@ -133,6 +133,9 @@ private:
         }
         Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI2, A_bar), d, s);
         Y->SetSlots(d * d);
+        if ((int)Y->GetLevel() >= this->m_multDepth - 3) {
+            Y = m_cc->EvalBootstrap(Y, 2, 18);
+        }
 
         return Y;
     }

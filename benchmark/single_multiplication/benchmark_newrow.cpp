@@ -1,6 +1,6 @@
 #include "benchmark_singlemult.h"
 
-const int ITERATION_COUNT = 1;
+const int ITERATION_COUNT = 10;
 
 BENCHMARK_TEMPLATE(BM_NewRow, 4)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
 BENCHMARK_TEMPLATE(BM_NewRow, 8)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);

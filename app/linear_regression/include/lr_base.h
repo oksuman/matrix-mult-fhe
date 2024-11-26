@@ -157,7 +157,7 @@ public:
     virtual TimingResult trainWithTimings(const Ciphertext<DCRTPoly>& X,
                                         const Ciphertext<DCRTPoly>& y) = 0;
 
-    double inferenceAndCalculateMSE(const std::string& testFile) {
+    double inferenceAndCalculateMSE(const std::string& testFile, const std::string& saveFile) {
         Plaintext ptx;
         m_cc->Decrypt(m_keyPair.secretKey, m_weights, &ptx);
         ptx->SetLength(FEATURE_DIM*FEATURE_DIM);
@@ -169,6 +169,6 @@ public:
         CSVProcessor::processDataset(testFile, test_features, test_outcomes, 
                                    FEATURE_DIM, SAMPLE_DIM);
 
-        return utils::calculateMSE(weight_vec, test_features, test_outcomes, "newcol_mse_result.txt", FEATURE_DIM, SAMPLE_DIM);
+        return utils::calculateMSE(weight_vec, test_features, test_outcomes, saveFile, FEATURE_DIM, SAMPLE_DIM);
     }
 };

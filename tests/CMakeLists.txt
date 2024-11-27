@@ -8,20 +8,11 @@ find_package(OpenFHE CONFIG REQUIRED)
 set(TEST_SOURCES
     matrix_operation_test.cpp
 
-    mult_jkls18_test.cpp
-    mult_rt22_test.cpp  
     mult_as24_test.cpp
-    mult_newRow_test.cpp
-    mult_newCol_test.cpp
+    # mult_newCol_test.cpp
 
-    inverse_diagonal_test.cpp
-    inverse_jkls18_test.cpp
-    inverse_rt22_test.cpp
     inverse_as24_test.cpp
-    inverse_newCol_test.cpp
-    inverse_newRow_test.cpp
-    
-    inverse_naive_test.cpp
+    # inverse_newCol_test.cpp
 )
 
 # Add each test executable

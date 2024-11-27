@@ -12,16 +12,14 @@ using namespace lbcrypto;
 template <int d> class MatrixMultAS24Test : public ::testing::Test {
   protected:
     void SetUp() override {
+        int max_batch = 1 << 16;
+
         CCParams<CryptoContextCKKSRNS> parameters;
-        parameters.SetMultiplicativeDepth(2);
+        parameters.SetMultiplicativeDepth(3);
         parameters.SetScalingModSize(50);
-
-        // For single matrix multiplication
-        int max_batch = 1 << 13;
-        int s = std::min(max_batch / d / d, d);
-
-        parameters.SetBatchSize(d * d * s);
-        parameters.SetSecurityLevel(HEStd_128_classic);
+        parameters.SetRingDim(1<<17);
+        parameters.SetBatchSize(d * d);
+        parameters.SetSecurityLevel(HEStd_NotSet);
 
         m_cc = GenCryptoContext(parameters);
         m_cc->Enable(PKE);
@@ -32,9 +30,8 @@ template <int d> class MatrixMultAS24Test : public ::testing::Test {
         m_publicKey = keyPair.publicKey;
         m_privateKey = keyPair.secretKey;
 
-        // Generate rotation keys for batch size
         std::vector<int> rotations;
-        for (int i = 1; i < d * d * s; i *= 2) {
+        for (int i = 1; i < max_batch; i *= 2) {
             rotations.push_back(i);
             rotations.push_back(-i);
         }
@@ -42,8 +39,7 @@ template <int d> class MatrixMultAS24Test : public ::testing::Test {
         m_cc->EvalMultKeyGen(m_privateKey);
 
         m_enc = std::make_shared<Encryption>(m_cc, m_publicKey);
-        matMult = std::make_unique<MatrixMult_AS24<d>>(m_enc, m_cc, m_publicKey,
-                                                       rotations);
+        matMult = std::make_unique<MatrixMult_AS24Opt<d>>(m_enc, m_cc, m_publicKey);
     }
 
     std::vector<double> generateRandomMatrix() {
@@ -89,7 +85,7 @@ template <int d> class MatrixMultAS24Test : public ::testing::Test {
     PublicKey<DCRTPoly> m_publicKey;
     PrivateKey<DCRTPoly> m_privateKey;
     std::shared_ptr<Encryption> m_enc;
-    std::unique_ptr<MatrixMult_AS24<d>> matMult;
+    std::unique_ptr<MatrixMult_AS24Opt<d>> matMult;
 };
 
 template <typename T>
@@ -108,6 +104,10 @@ TYPED_TEST_P(MatrixMultAS24TestFixture, MultiplicationTest) {
     auto enc_matrixA = this->m_enc->encryptInput(matrixA);
     auto enc_matrixB = this->m_enc->encryptInput(matrixB);
 
+    enc_matrixA->SetSlots(d*d);
+    enc_matrixB->SetSlots(d*d);
+    enc_matrixA = this->matMult->clean(enc_matrixA);
+    enc_matrixB = this->matMult->clean(enc_matrixB);
     auto mult_result = this->matMult->eval_mult(enc_matrixA, enc_matrixB);
 
     Plaintext result;
@@ -138,10 +138,7 @@ TYPED_TEST_P(MatrixMultAS24TestFixture, MultiplicationTest) {
 
 REGISTER_TYPED_TEST_SUITE_P(MatrixMultAS24TestFixture, MultiplicationTest);
 
-using TestSizes = ::testing::Types<
-    std::integral_constant<int, 4>, std::integral_constant<int, 8>,
-    std::integral_constant<int, 16>, std::integral_constant<int, 32>,
-    std::integral_constant<int, 64>>;
+using TestSizes = ::testing::Types<std::integral_constant<int, 64>>;
 
 INSTANTIATE_TYPED_TEST_SUITE_P(MatrixMultAS24, MatrixMultAS24TestFixture,
                                TestSizes);

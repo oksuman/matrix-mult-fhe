@@ -9,258 +9,227 @@ using namespace lbcrypto;
 // Base class for matrix inverse operations
 template <int d> class MatrixInverseBase {
   protected:
-    int r;
-    int depth;
-    virtual std::vector<double> initializeIdentityMatrix(size_t dim) {
-        std::vector<double> identity(dim * dim, 0.0);
-        for (size_t i = 0; i < dim; i++) {
-            identity[i * dim + i] = 1.0;
+    static constexpr int r = 30;
+    static constexpr int depth = 29;
+
+    virtual std::vector<double> initializeIdentityMatrix(int batchSize) {
+        std::vector<double> identity(batchSize, 0.0);
+        #pragma omp parallel for schedule(static)
+        for (size_t i = 0; i < d; i++) {
+            identity[i * d + i] = 1.0;
         }
         return identity;
     }
 
   public:
-    MatrixInverseBase(int iterations, int multDepth)
-        : r(iterations), depth(multDepth) {}
+    MatrixInverseBase() {} 
     virtual ~MatrixInverseBase() = default;
 
     virtual Ciphertext<DCRTPoly>
     eval_inverse(const Ciphertext<DCRTPoly> &M) = 0;
 };
 
-// Implementation using JKLS18 matrix multiplication
 template <int d>
-class MatrixInverse_JKLS18 : public MatrixInverseBase<d>,
-                             public MatrixMult_JKLS18<d> {
+class MatrixInverse_AS24Opt : public MatrixInverseBase<d>,
+                           public MatrixMult_AS24Opt<d> {
   protected:
     using MatrixOperationBase<d>::rot;
     using MatrixOperationBase<d>::m_cc;
-    using MatrixOperationBase<d>::vectorRotate;
-    using MatrixOperationBase<d>::generateShiftingMsk;
-    using MatrixOperationBase<d>::columnShifting;
 
   public:
-    MatrixInverse_JKLS18(std::shared_ptr<Encryption> enc,
-                         CryptoContext<DCRTPoly> cc,
-                         PublicKey<DCRTPoly> publicKey,
-                         std::vector<int> rotIndices, int iterations,
-                         int multDepth)
-        : MatrixInverseBase<d>(iterations, multDepth), MatrixMult_JKLS18<d>(
-                                                           enc, cc, publicKey,
-                                                           rotIndices) {}
+    MatrixInverse_AS24Opt(std::shared_ptr<Encryption> enc,
+                       CryptoContext<DCRTPoly> cc,
+                       PublicKey<DCRTPoly> publicKey)
+        : MatrixInverseBase<d>(), MatrixMult_AS24Opt<d>(enc, cc, publicKey) {}
 
     Ciphertext<DCRTPoly> eval_inverse(const Ciphertext<DCRTPoly> &M) override {
-        std::vector<double> vI = this->initializeIdentityMatrix(d);
-        Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI);
+        std::vector<double> vI = this->initializeIdentityMatrix(this->max_batch);
+        Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI, 1, 0, nullptr, this->max_batch);
 
-        auto M_transposed = this->eval_transpose(M);
-        auto MM_transposed = this->eval_mult(M, M_transposed);
+        auto m_M = M->Clone();
+        m_M->SetSlots(this->max_batch);
+        m_M = this->clean(m_M);
 
+        auto M_transposed = this->eval_transpose(m_M, this->max_batch);
+        auto MM_transposed = this->eval_mult(m_M, M_transposed);
+        
         auto trace = this->eval_trace(MM_transposed, d * d);
         auto trace_reciprocal =
-            this->m_cc->EvalDivide(trace, (d * d) / 3 - d, (d * d) / 3 + d, 50);
+            this->m_cc->EvalDivide(trace, (d * d) / 3 - d, (d * d) / 3 + d, 5);
 
-        auto Y =
-            this->m_cc->EvalMultAndRelinearize(M_transposed, trace_reciprocal);
-        auto A_bar =
-            this->m_cc->EvalSub(pI, this->m_cc->EvalMultAndRelinearize(
-                                        MM_transposed, trace_reciprocal));
+        Ciphertext<DCRTPoly> A_bar;
+        Ciphertext<DCRTPoly> Y;
+
+        #pragma omp parallel sections
+        {
+            #pragma omp section
+            {
+                Y =
+                    this->m_cc->EvalMultAndRelinearize(M_transposed, trace_reciprocal);
+            }
+            #pragma omp section
+            {
+                MM_transposed->SetSlots(this->max_batch);
+                MM_transposed = this->clean(MM_transposed);
+                A_bar =
+                    this->m_cc->EvalSub(pI, this->m_cc->EvalMultAndRelinearize(
+                                                MM_transposed, trace_reciprocal));
+            }
+        }
+
+        std::cout << "level of Y: " << Y->GetLevel() << std::endl;
+        std::cout << "level of A: " << A_bar->GetLevel() << std::endl;
 
         for (int i = 0; i < this->r - 1; i++) {
+            // #pragma omp parallel sections
+            // {
+            //     #pragma omp section
+            //     {
+            //         Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
+            //     }
+            //     #pragma omp section
+            //     {
+            //         A_bar = this->eval_mult(A_bar, A_bar);   
+            //     }
+            // }
+
             Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
-            A_bar = this->eval_mult(A_bar, A_bar);
+            A_bar = this->eval_mult(A_bar, A_bar);   
             if ((int)Y->GetLevel() >= this->depth - 3) {
-                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
-                Y = m_cc->EvalBootstrap(Y, 2, 18);
+                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);   
+                Y = m_cc->EvalBootstrap(Y, 2, 18);     
+            } 
+            #pragma omp parallel sections
+            {
+                #pragma omp section
+                {
+                    A_bar->SetSlots(this->max_batch);
+                    A_bar = this->clean(A_bar);
+                }
+                #pragma omp section
+                {
+                    Y->SetSlots(this->max_batch);
+                    Y = this->clean(Y);
+                }
             }
+            std::cout << "current interation: " << i << std::endl;
+            std::cout << "level of Y: " << Y->GetLevel() << std::endl;
+            std::cout << "level of A: " << A_bar->GetLevel() << std::endl;
         }
         Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
-
         return Y;
     }
-};
 
-template <int d>
-class MatrixInverse_RT22 : public MatrixInverseBase<d>,
-                           public MatrixMult_RT22<d> {
-  protected:
-    using MatrixOperationBase<d>::rot;
-    using MatrixOperationBase<d>::m_cc;
+    Ciphertext<DCRTPoly> eval_inverse_debug(const Ciphertext<DCRTPoly> &M, PrivateKey<DCRTPoly> sk) {
+        Plaintext debug;
 
-  public:
-    MatrixInverse_RT22(std::shared_ptr<Encryption> enc,
-                       CryptoContext<DCRTPoly> cc,
-                       PublicKey<DCRTPoly> publicKey,
-                       std::vector<int> rotIndices, int iterations,
-                       int multDepth)
-        : MatrixInverseBase<d>(iterations, multDepth), MatrixMult_RT22<d>(
-                                                           enc, cc, publicKey,
-                                                           rotIndices) {}
+        std::vector<double> vI = this->initializeIdentityMatrix(this->max_batch);
+        Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI, 1, 0, nullptr, this->max_batch);
 
-    Ciphertext<DCRTPoly> eval_inverse(const Ciphertext<DCRTPoly> &M) override {
-        std::vector<double> vI = this->initializeIdentityMatrix(d);
-        Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI);
+        auto m_M = M->Clone();
+        m_M->SetSlots(this->max_batch);
+        m_M = this->clean(m_M);
+        auto M_transposed = this->eval_transpose(m_M, this->max_batch);
 
-        auto M_transposed = this->eval_transpose(M);
-        auto MM_transposed = this->eval_mult(M, M_transposed);
+        std::cout << "slots of M: " << m_M->GetSlots() << std::endl;
+        m_cc->Decrypt(m_M, sk, &debug);
+        debug->SetLength(10);
+        std::cout << "M: " << debug << std::endl;
 
-        auto trace = this->eval_trace(MM_transposed, d * d * d);
+        std::cout << "slots of Mt: " << M_transposed->GetSlots() << std::endl;
+        m_cc->Decrypt(M_transposed, sk, &debug);
+        debug->SetLength(10);
+        std::cout << "Mt: " << debug << std::endl;
+
+
+
+        auto MM_transposed = this->eval_mult(m_M, M_transposed);
+        
+
+        m_cc->Decrypt(MM_transposed, sk, &debug);
+        debug->SetLength(10);
+        std::cout << "Level of MMt: " << MM_transposed->GetLevel() << std::endl;
+        std::cout << "slots of MMt: " << MM_transposed->GetSlots() << std::endl;
+        std::cout << "MMt: " << debug << std::endl;
+
+        auto trace = this->eval_trace(MM_transposed, d * d);
+        m_cc->Decrypt(trace, sk, &debug);
+        std::cout << "Level of trace: " << trace->GetLevel() << std::endl;
+        debug->SetLength(10);
+        std::cout << "trace: " << debug << std::endl;
+
         auto trace_reciprocal =
-            this->m_cc->EvalDivide(trace, (d * d) / 3 - d, (d * d) / 3 + d, 50);
+            this->m_cc->EvalDivide(trace, (d * d) / 3 - d, (d * d) / 3 + d, 5);
 
-        auto Y =
-            this->m_cc->EvalMultAndRelinearize(M_transposed, trace_reciprocal);
-        auto A_bar =
-            this->m_cc->EvalSub(pI, this->m_cc->EvalMultAndRelinearize(
-                                        MM_transposed, trace_reciprocal));
+        m_cc->Decrypt(trace_reciprocal, sk, &debug);
+        debug->SetLength(10);
+        std::cout << "Level of MMt: " << trace_reciprocal->GetLevel() << std::endl;
+        std::cout << "1/trace: " << debug << std::endl;
 
-        for (int i = 0; i < this->r - 1; i++) {
-            if (d >= 8 && (int)Y->GetLevel() >= this->depth - 2) {
-                A_bar->SetSlots(d * d);
-                A_bar = m_cc->EvalBootstrap(A_bar, 2, 17);
-                Y->SetSlots(d * d);
-                Y = m_cc->EvalBootstrap(Y, 2, 17);
+        Ciphertext<DCRTPoly> A_bar;
+        Ciphertext<DCRTPoly> Y;
+
+        #pragma omp parallel sections
+        {
+            #pragma omp section
+            {
+                Y =
+                    this->m_cc->EvalMultAndRelinearize(M_transposed, trace_reciprocal);
+                std::cout << "slots of Y: " << Y->GetSlots() << std::endl;
+
             }
-            Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
-            A_bar = this->eval_mult(A_bar, A_bar);
-        }
-        Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
-        return Y;
-    }
-};
-
-template <int d>
-class MatrixInverse_AS24 : public MatrixInverseBase<d>,
-                           public MatrixMult_AS24<d> {
-  protected:
-    using MatrixOperationBase<d>::rot;
-    using MatrixOperationBase<d>::m_cc;
-
-  public:
-    MatrixInverse_AS24(std::shared_ptr<Encryption> enc,
-                       CryptoContext<DCRTPoly> cc,
-                       PublicKey<DCRTPoly> publicKey,
-                       std::vector<int> rotIndices, int iterations,
-                       int multDepth)
-        : MatrixInverseBase<d>(iterations, multDepth), MatrixMult_AS24<d>(
-                                                           enc, cc, publicKey,
-                                                           rotIndices) {}
-
-    Ciphertext<DCRTPoly> eval_inverse(const Ciphertext<DCRTPoly> &M) override {
-        std::vector<double> vI = this->initializeIdentityMatrix(d);
-        Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI);
-
-        auto M_transposed = this->eval_transpose(M);
-        auto MM_transposed = this->eval_mult(M, M_transposed);
-
-        auto trace = this->eval_trace(MM_transposed, d * d * this->s);
-        auto trace_reciprocal =
-            this->m_cc->EvalDivide(trace, (d * d) / 3 - d, (d * d) / 3 + d, 50);
-
-        auto Y =
-            this->m_cc->EvalMultAndRelinearize(M_transposed, trace_reciprocal);
-        auto A_bar =
-            this->m_cc->EvalSub(pI, this->m_cc->EvalMultAndRelinearize(
-                                        MM_transposed, trace_reciprocal));
-        A_bar->SetSlots(d * d * this->s);
-        A_bar = this->clean(A_bar);
-
-        for (int i = 0; i < this->r - 1; i++) {
-            Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
-            A_bar = this->eval_mult(A_bar, A_bar);
-
-            if ((int)Y->GetLevel() >= this->depth - 3) {
-                A_bar->SetSlots(d * d);
-                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
-                Y->SetSlots(d * d);
-                Y = m_cc->EvalBootstrap(Y, 2, 18);
-                A_bar->SetSlots(d * d * this->s);
-                A_bar = this->clean(A_bar);
-                Y->SetSlots(d * d * this->s);
-                Y = this->clean(Y);
-            } else {
-                A_bar = this->clean(A_bar);
-                Y = this->clean(Y);
+            #pragma omp section
+            {
+                MM_transposed->SetSlots(this->max_batch);
+                MM_transposed = this->clean(MM_transposed);
+                A_bar =
+                    this->m_cc->EvalSub(pI, this->m_cc->EvalMultAndRelinearize(
+                                                MM_transposed, trace_reciprocal));
+                std::cout << "slots of A: " << A_bar->GetSlots() << std::endl;
             }
         }
-        Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
-        return Y;
-    }
 
-    Ciphertext<DCRTPoly> eval_inverse_debug(const Ciphertext<DCRTPoly> &M,
-                                            PrivateKey<DCRTPoly> m_privateKey) {
-        std::vector<double> vI = this->initializeIdentityMatrix(d);
-        Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI);
-
-        Plaintext debug_ptx;
-        std::vector<double> debug_vec;
-
-        auto M_transposed = this->eval_transpose(M);
-        auto MM_transposed = this->eval_mult(M, M_transposed);
-
-        this->m_cc->Decrypt(m_privateKey, M_transposed, &debug_ptx);
-        debug_vec = debug_ptx->GetRealPackedValue();
-        std::cout << "M^T: " << std::endl;
-        std::cout << debug_vec << std::endl;
-
-        this->m_cc->Decrypt(m_privateKey, MM_transposed, &debug_ptx);
-        debug_vec = debug_ptx->GetRealPackedValue();
-        std::cout << "MM^T: " << std::endl;
-        std::cout << debug_vec << std::endl;
-
-        auto trace = this->eval_trace(MM_transposed, d * d * d);
-
-        this->m_cc->Decrypt(m_privateKey, trace, &debug_ptx);
-        debug_vec = debug_ptx->GetRealPackedValue();
-        std::cout << "trace: " << std::endl;
-        std::cout << debug_vec << std::endl;
-
-        auto trace_reciprocal = this->m_cc->EvalDivide(trace, d, d * d, 50);
-
-        this->m_cc->Decrypt(m_privateKey, trace_reciprocal, &debug_ptx);
-        debug_vec = debug_ptx->GetRealPackedValue();
-        std::cout << "trace_reciprocal: " << std::endl;
-        std::cout << debug_vec << std::endl;
-
-        auto Y =
-            this->m_cc->EvalMultAndRelinearize(M_transposed, trace_reciprocal);
-        auto A_bar =
-            this->m_cc->EvalSub(pI, this->m_cc->EvalMultAndRelinearize(
-                                        MM_transposed, trace_reciprocal));
-        A_bar->SetSlots(d * d * this->s);
-        A_bar = this->clean(A_bar);
-
-        this->m_cc->Decrypt(m_privateKey, Y, &debug_ptx);
-        debug_vec = debug_ptx->GetRealPackedValue();
-        std::cout << "Y: " << std::endl;
-        std::cout << debug_vec << std::endl;
-
-        this->m_cc->Decrypt(m_privateKey, A_bar, &debug_ptx);
-        debug_vec = debug_ptx->GetRealPackedValue();
-        std::cout << "A_bar: " << std::endl;
-        std::cout << debug_vec << std::endl;
+        std::cout << "level of Y: " << Y->GetLevel() << std::endl;
+        std::cout << "level of A: " << A_bar->GetLevel() << std::endl;
+        m_cc->Decrypt(Y, sk, &debug);
+        debug->SetLength(10);
+        std::cout << "Y: " << debug << std::endl;
+        m_cc->Decrypt(A_bar, sk, &debug);
+        debug->SetLength(10);
+        std::cout << "A_bar: " << debug << std::endl;
 
         for (int i = 0; i < this->r - 1; i++) {
+          
+            Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
+            A_bar = this->eval_mult(A_bar, A_bar);   
 
             if ((int)Y->GetLevel() >= this->depth - 2) {
-                A_bar = m_cc->EvalBootstrap(A_bar, 2, 17);
-                Y = m_cc->EvalBootstrap(Y, 2, 17);
+                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);   
+                Y = m_cc->EvalBootstrap(Y, 2, 18);     
+            } 
+
+            #pragma omp parallel sections
+            {
+                #pragma omp section
+                {
+                    // Y->SetSlots(this->max_batch);
+                    Y = this->clean(Y);
+                }
+                #pragma omp section
+                {
+                    // A_bar->SetSlots(this->max_batch);
+                    A_bar = this->clean(A_bar);
+                }
             }
-            Y = this->eval_mult_and_clean(Y, this->m_cc->EvalAdd(pI, A_bar));
-            A_bar = this->eval_mult_and_clean(A_bar, A_bar);
-            std::cout << i << "-th iteration: " << std::endl;
+            std::cout << "current interation: " << i << std::endl;
             std::cout << "level of Y: " << Y->GetLevel() << std::endl;
-            std::cout << "level of A_bar: " << A_bar->GetLevel() << std::endl;
-
-            this->m_cc->Decrypt(m_privateKey, Y, &debug_ptx);
-            debug_vec = debug_ptx->GetRealPackedValue();
-            std::cout << "Y: " << std::endl;
-            std::cout << debug_vec << std::endl;
-
-            this->m_cc->Decrypt(m_privateKey, A_bar, &debug_ptx);
-            debug_vec = debug_ptx->GetRealPackedValue();
-            std::cout << "A_bar: " << std::endl;
-            std::cout << debug_vec << std::endl;
+            std::cout << "level of A: " << A_bar->GetLevel() << std::endl;
+            m_cc->Decrypt(Y, sk, &debug);
+            debug->SetLength(10);
+            std::cout << "Y: " << debug << std::endl;
+            m_cc->Decrypt(A_bar, sk, &debug);
+            debug->SetLength(10);
+            std::cout << "A_bar: " << debug << std::endl;
         }
         Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
         return Y;
@@ -268,101 +237,51 @@ class MatrixInverse_AS24 : public MatrixInverseBase<d>,
 };
 
 // Implementation using newCol matrix multiplication
-template <int d>
-class MatrixInverse_newCol : public MatrixInverseBase<d>,
-                             public MatrixMult_newCol<d> {
-  protected:
-    using MatrixOperationBase<d>::rot;
-    using MatrixOperationBase<d>::m_cc;
-    using MatrixOperationBase<d>::vectorRotate;
+// template <int d>
+// class MatrixInverse_newCol : public MatrixInverseBase<d>,
+//                              public MatrixMult_newCol<d> {
+//   protected:
+//     using MatrixOperationBase<d>::rot;
+//     using MatrixOperationBase<d>::m_cc;
+//     using MatrixOperationBase<d>::vectorRotate;
 
-  public:
-    MatrixInverse_newCol(std::shared_ptr<Encryption> enc,
-                         CryptoContext<DCRTPoly> cc,
-                         PublicKey<DCRTPoly> publicKey,
-                         std::vector<int> rotIndices, int iterations,
-                         int multDepth)
-        : MatrixInverseBase<d>(iterations, multDepth), MatrixMult_newCol<d>(
-                                                           enc, cc, publicKey,
-                                                           rotIndices) {}
+//   public:
+//     MatrixInverse_newCol(std::shared_ptr<Encryption> enc,
+//                          CryptoContext<DCRTPoly> cc,
+//                          PublicKey<DCRTPoly> publicKey,
+//                          std::vector<int> rotIndices, int iterations,
+//                          int multDepth)
+//         : MatrixInverseBase<d>(iterations, multDepth), MatrixMult_newCol<d>(
+//                                                            enc, cc, publicKey,
+//                                                            rotIndices) {}
 
-    Ciphertext<DCRTPoly> eval_inverse(const Ciphertext<DCRTPoly> &M) override {
-        std::vector<double> vI = this->initializeIdentityMatrix(d);
-        Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI);
+//     Ciphertext<DCRTPoly> eval_inverse(const Ciphertext<DCRTPoly> &M) override {
+//         std::vector<double> vI = this->initializeIdentityMatrix(d);
+//         Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI);
 
-        auto M_transposed = this->eval_transpose(M);
-        auto MM_transposed = this->eval_mult(M, M_transposed);
+//         auto M_transposed = this->eval_transpose(M);
+//         auto MM_transposed = this->eval_mult(M, M_transposed);
 
-        auto trace = this->eval_trace(MM_transposed, d * d);
-        auto trace_reciprocal =
-            this->m_cc->EvalDivide(trace, (d * d) / 3 - d, (d * d) / 3 + d, 50);
+//         auto trace = this->eval_trace(MM_transposed, d * d);
+//         auto trace_reciprocal =
+//             this->m_cc->EvalDivide(trace, (d * d) / 3 - d, (d * d) / 3 + d, 50);
 
-        auto Y =
-            this->m_cc->EvalMultAndRelinearize(M_transposed, trace_reciprocal);
-        auto A_bar =
-            this->m_cc->EvalSub(pI, this->m_cc->EvalMultAndRelinearize(
-                                        MM_transposed, trace_reciprocal));
+//         auto Y =
+//             this->m_cc->EvalMultAndRelinearize(M_transposed, trace_reciprocal);
+//         auto A_bar =
+//             this->m_cc->EvalSub(pI, this->m_cc->EvalMultAndRelinearize(
+//                                         MM_transposed, trace_reciprocal));
 
-        for (int i = 0; i < this->r - 1; i++) {
-            if (d >= 8 && (int)Y->GetLevel() >= this->depth - 2) {
-                A_bar = m_cc->EvalBootstrap(A_bar, 2, 17);
-                Y = m_cc->EvalBootstrap(Y, 2, 17);
-            }
-            Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
-            A_bar = this->eval_mult(A_bar, A_bar);
-        }
-        Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
-        return Y;
-    }
-};
+//         for (int i = 0; i < this->r - 1; i++) {
+//             if (d >= 8 && (int)Y->GetLevel() >= this->depth - 2) {
+//                 A_bar = m_cc->EvalBootstrap(A_bar, 2, 17);
+//                 Y = m_cc->EvalBootstrap(Y, 2, 17);
+//             }
+//             Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
+//             A_bar = this->eval_mult(A_bar, A_bar);
+//         }
+//         Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
+//         return Y;
+//     }
+// };
 
-// row-based approach
-template <int d>
-class MatrixInverse_newRow : public MatrixInverseBase<d>,
-                             public MatrixMult_newRow<d> {
-  protected:
-    using MatrixOperationBase<d>::rot;
-    using MatrixOperationBase<d>::m_cc;
-    using MatrixOperationBase<d>::vectorRotate;
-
-  public:
-    MatrixInverse_newRow(std::shared_ptr<Encryption> enc,
-                         CryptoContext<DCRTPoly> cc,
-                         PublicKey<DCRTPoly> publicKey,
-                         std::vector<int> rotIndices, int iterations,
-                         int multDepth)
-        : MatrixInverseBase<d>(iterations, multDepth), MatrixMult_newRow<d>(
-                                                           enc, cc, publicKey,
-                                                           rotIndices) {}
-
-    Ciphertext<DCRTPoly> eval_inverse(const Ciphertext<DCRTPoly> &M) override {
-
-        std::vector<double> vI = this->initializeIdentityMatrix(d);
-        Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI);
-
-        auto M_transposed = this->eval_transpose(M);
-        auto MM_transposed = this->eval_mult(M, M_transposed);
-
-        auto trace = this->eval_trace(MM_transposed, d * d);
-        auto trace_reciprocal =
-            this->m_cc->EvalDivide(trace, (d * d) / 3 - d, (d * d) / 3 + d, 50);
-
-        auto Y =
-            this->m_cc->EvalMultAndRelinearize(M_transposed, trace_reciprocal);
-        auto A_bar =
-            this->m_cc->EvalSub(pI, this->m_cc->EvalMultAndRelinearize(
-                                        MM_transposed, trace_reciprocal));
-
-        for (int i = 0; i < this->r - 1; i++) {
-            if (d >= 8 && (int)Y->GetLevel() >= this->depth - 2) {
-                A_bar = m_cc->EvalBootstrap(A_bar, 2, 17);
-                Y = m_cc->EvalBootstrap(Y, 2, 17);
-            }
-            Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
-            A_bar = this->eval_mult(A_bar, A_bar);
-        }
-        Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
-
-        return Y;
-    }
-};

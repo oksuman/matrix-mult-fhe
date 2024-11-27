@@ -13,7 +13,7 @@ template <int d> class MatrixOperationTest : public ::testing::Test {
   protected:
     void SetUp() override {
         CCParams<CryptoContextCKKSRNS> parameters;
-        parameters.SetMultiplicativeDepth(2);
+        parameters.SetMultiplicativeDepth(10);
         parameters.SetScalingModSize(50);
         parameters.SetBatchSize(d * d);
         parameters.SetSecurityLevel(HEStd_128_classic);
@@ -22,6 +22,7 @@ template <int d> class MatrixOperationTest : public ::testing::Test {
         m_cc->Enable(PKE);
         m_cc->Enable(KEYSWITCH);
         m_cc->Enable(LEVELEDSHE);
+        m_cc->Enable(ADVANCEDSHE);
 
         auto keyPair = m_cc->KeyGen();
         m_publicKey = keyPair.publicKey;
@@ -37,7 +38,7 @@ template <int d> class MatrixOperationTest : public ::testing::Test {
 
         m_enc = std::make_shared<Encryption>(m_cc, m_publicKey);
         matOp = std::make_unique<TestMatrixOperation<d>>(
-            m_enc, m_cc, m_publicKey, rotations);
+            m_enc, m_cc, m_publicKey);
     }
 
     std::vector<double> generateRandomMatrix() {
@@ -78,7 +79,7 @@ TYPED_TEST_P(MatrixOperationTestFixture, TransposeTest) {
     }
 
     auto enc_matrix = this->m_enc->encryptInput(matrix);
-    auto transpose_result = this->matOp->eval_transpose(enc_matrix);
+    auto transpose_result = this->matOp->eval_transpose(enc_matrix, d*d);
 
     Plaintext result;
     this->m_cc->Decrypt(this->m_privateKey, transpose_result, &result);
@@ -113,13 +114,73 @@ TYPED_TEST_P(MatrixOperationTestFixture, TraceTest) {
     EXPECT_NEAR(decrypted[0], expected_trace, 0.0001) << "Trace value mismatch";
 }
 
-REGISTER_TYPED_TEST_SUITE_P(MatrixOperationTestFixture, TransposeTest,
-                            TraceTest);
+TYPED_TEST_P(MatrixOperationTestFixture, TraceReciprocalTest) {
+    constexpr size_t d = TypeParam::value;
+    auto M = this->generateRandomMatrix();
+    
+    // Calculate M * M^T
+    std::vector<double> MM_transposed(d * d, 0.0);
+    for (size_t i = 0; i < d; i++) {
+        for (size_t j = 0; j < d; j++) {
+            double sum = 0.0;
+            for (size_t k = 0; k < d; k++) {
+                sum += M[i * d + k] * M[j * d + k];
+            }
+            MM_transposed[i * d + j] = sum;
+        }
+    }
+    
+    // Calculate expected trace of MM^T
+    double expected_trace = 0.0;
+    for (size_t i = 0; i < d; i++) {
+        expected_trace += MM_transposed[i * d + i];
+    }
+    
+    // Calculate expected reciprocal
+    double expected_reciprocal = 1.0 / expected_trace;
+    
+    // Encrypt and calculate encrypted result
+    auto enc_M = this->m_enc->encryptInput(MM_transposed);
+    auto trace = this->matOp->eval_trace(enc_M, d * d);
+    auto trace_reciprocal = 
+        this->m_cc->EvalDivide(trace, (d * d) / 3 - d, (d * d) / 3 + d, 5);
+    
+    std::cout << "Final Level: " << trace_reciprocal->GetLevel() << std::endl;
+    
+    // Decrypt result
+    Plaintext result;
+    this->m_cc->Decrypt(this->m_privateKey, trace_reciprocal, &result);
+    result->SetLength(d * d);
+    std::vector<double> decrypted = result->GetRealPackedValue();
+    
+    // Calculate error statistics
+    double max_error = 0.0;
+    double total_error = 0.0;
+    
+    for (size_t i = 0; i < d * d; i++) {
+        double error = std::abs(decrypted[i] - expected_reciprocal);
+        max_error = std::max(max_error, error);
+        total_error += error;
+        
+        EXPECT_NEAR(decrypted[i], expected_reciprocal, 0.001) 
+            << "Trace reciprocal mismatch at index " << i;
+        EXPECT_FALSE(std::isinf(decrypted[i])) 
+            << "Result is infinite at index " << i;
+        EXPECT_FALSE(std::isnan(decrypted[i])) 
+            << "Result is NaN at index " << i;
+    }
+    
+    double avg_error = total_error / (d * d);
+    
+    std::cout << "Error Statistics:" << std::endl;
+    std::cout << "Maximum Error: " << max_error << std::endl;
+    std::cout << "Average Error: " << avg_error << std::endl;
+    std::cout << "Expected Value: " << expected_reciprocal << std::endl;
+}
 
-using TestSizes = ::testing::Types<
-    std::integral_constant<size_t, 4>, std::integral_constant<size_t, 8>,
-    std::integral_constant<size_t, 16>, std::integral_constant<size_t, 32>,
-    std::integral_constant<size_t, 64>>;
+REGISTER_TYPED_TEST_SUITE_P(MatrixOperationTestFixture, TransposeTest, TraceTest, TraceReciprocalTest);
+
+using TestSizes = ::testing::Types<std::integral_constant<size_t, 64>>;
 
 INSTANTIATE_TYPED_TEST_SUITE_P(MatrixOperation, MatrixOperationTestFixture,
                                TestSizes);

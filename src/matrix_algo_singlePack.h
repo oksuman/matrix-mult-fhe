@@ -1,6 +1,10 @@
 
 #pragma once
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 #include "encryption.h"
 #include "rotation.h"
 #include <memory>
@@ -9,40 +13,183 @@
 
 using namespace lbcrypto;
 
+template <int d>
+class MatrixOperationBase {
+protected:
+    std::shared_ptr<Encryption> m_enc;
+    CryptoContext<DCRTPoly> m_cc;
+    PublicKey<DCRTPoly> m_PublicKey;
+    RotationComposer rot;
+    const Ciphertext<DCRTPoly> m_zeroCache;
+
+    virtual Ciphertext<DCRTPoly> createZeroCache() {
+        std::vector<double> zeroVec(d * d, 0.0);
+        return m_enc->encryptInput(zeroVec);
+    }
+
+public:
+    MatrixOperationBase(std::shared_ptr<Encryption> enc,
+                       CryptoContext<DCRTPoly> cc,
+                       PublicKey<DCRTPoly> publicKey)
+        : m_enc(enc), m_cc(cc), m_PublicKey(publicKey),
+          rot(cc), m_zeroCache(createZeroCache()) {}
+
+    virtual ~MatrixOperationBase() = default;
+
+    virtual Ciphertext<DCRTPoly>
+    eval_mult(const Ciphertext<DCRTPoly> &matrixA,
+             const Ciphertext<DCRTPoly> &matrixB) = 0;
+
+    std::vector<double> vectorRotate(const std::vector<double> &vec,
+                                   int rotateIndex) {
+        if (vec.empty())
+            return std::vector<double>();
+            
+        std::vector<double> result = vec;
+        int n = result.size();
+        
+        if (rotateIndex > 0) {
+            std::rotate(result.begin(), result.begin() + rotateIndex,
+                      result.end());
+        }
+        else if (rotateIndex < 0) {
+            rotateIndex += n;
+            std::rotate(result.begin(), result.begin() + rotateIndex,
+                      result.end());
+        }
+        return result;
+    }
+
+    std::vector<double> generateTransposeMsk(int k) {
+        std::set<int> indices;
+        std::vector<double> msk(d * d, 0);
+        
+        if (k >= 0) {
+            for (int j = 0; j < d - k; j++) {
+                indices.insert((d + 1) * j + k);
+            }
+        } else {
+            for (int j = -k; j < d; j++) {
+                indices.insert((d + 1) * j + k);
+            }
+        }
+        
+        #pragma omp parallel for
+        for (int i = 0; i < d * d; i++) {
+            if (indices.find(i) != indices.end()) {
+                msk[i] = 1.0;
+            }
+        }
+        
+        return msk;
+    }
+
+    Ciphertext<DCRTPoly> eval_transpose(Ciphertext<DCRTPoly> M, int batchSize) {
+        auto p = m_cc->MakeCKKSPackedPlaintext(generateTransposeMsk(0), 1, 0, nullptr, batchSize);
+        auto M_transposed = m_cc->EvalMult(M, p);
+        
+        #pragma omp parallel
+        {
+            #pragma omp single
+            {
+                #pragma omp taskgroup
+                {
+                    #pragma omp task
+                    {
+                        for (int i = 1; i < d; i++) {
+                            auto p = m_cc->MakeCKKSPackedPlaintext(generateTransposeMsk(i));
+                            auto rotated = rot.rotate(M, (d - 1) * i);
+                            auto mult = m_cc->EvalMult(rotated, p);
+                            #pragma omp critical
+                            m_cc->EvalAddInPlace(M_transposed, mult);
+                        }
+                    }
+
+                    #pragma omp task
+                    {
+                        for (int i = -1; i > -d; i--) {
+                            auto p = m_cc->MakeCKKSPackedPlaintext(generateTransposeMsk(i));
+                            auto rotated = rot.rotate(M, (d - 1) * i);
+                            auto mult = m_cc->EvalMult(rotated, p);
+                            #pragma omp critical
+                            m_cc->EvalAddInPlace(M_transposed, mult);
+                        }
+                    }
+                }
+            }
+        }
+        
+        return M_transposed;
+    }
+
+    Ciphertext<DCRTPoly> eval_trace(Ciphertext<DCRTPoly> M, int batchSize) {
+        std::vector<double> msk(batchSize, 0);
+        
+        #pragma omp parallel for
+        for (int i = 0; i < d * d; i += (d + 1)) {
+            msk[i] = 1;
+        }
+
+        auto trace = m_cc->EvalMult(M, m_cc->MakeCKKSPackedPlaintext(msk));
+        
+        for (int i = 1; i <= log2(batchSize); i++) {
+            auto rotated = rot.rotate(trace, batchSize / (1 << i));
+            m_cc->EvalAddInPlace(trace, rotated);
+        }
+        
+        return trace;
+    }
+
+    virtual const Ciphertext<DCRTPoly> &getZero() const { return m_zeroCache; }
+    constexpr size_t getMatrixSize() const { return d; }
+};
+
+// For test
+template <int d> class TestMatrixOperation : public MatrixOperationBase<d> {
+  protected:
+    using MatrixOperationBase<d>::rot;
+    using MatrixOperationBase<d>::m_cc;
+
+  public:
+    using MatrixOperationBase<d>::MatrixOperationBase;
+
+    Ciphertext<DCRTPoly>
+    eval_mult(const Ciphertext<DCRTPoly> &matrixA,
+              const Ciphertext<DCRTPoly> &matrixB) override {
+        return nullptr;
+    }
+};
+
 // optimized for 64 by 64 matrix inversion 
-template <int d> class MatrixMult_AS24Opt : public MatrixOperationBase<d> {
+template <int d>
+class MatrixMult_AS24Opt : public MatrixOperationBase<d> {
 private:
-    static constexpr int max_batch = 1 << 16;
     static constexpr int B = 4;
     static constexpr int s = 16;
 
 protected:
+    static constexpr int max_batch = 1 << 16;
     using MatrixOperationBase<d>::rot;
     using MatrixOperationBase<d>::m_cc;
 
 public:
     MatrixMult_AS24Opt(std::shared_ptr<Encryption> enc, CryptoContext<DCRTPoly> cc,
-                       PublicKey<DCRTPoly> publicKey, std::vector<int> rotIndices)
-        : MatrixOperationBase<d>(enc, cc, publicKey, rotIndices)
-    {}
+                       PublicKey<DCRTPoly> publicKey)
+        : MatrixOperationBase<d>(enc, cc, publicKey) {}
 
-    // k: col number 0~d-1
     std::vector<double> generatePhiMsk(int k) {
-        const int vector_size = d * d * s;
-        std::vector<double> msk(vector_size, 0);
-
+        std::vector<double> msk(max_batch, 0);
+        
         #pragma omp parallel for schedule(static)
-        for (int i = k; i < vector_size; i += d) {
+        for (int i = k; i < max_batch; i += d) {
             msk[i] = 1;
         }
         return msk;
     }
 
-    // k: row number 0~d-1
     std::vector<double> generatePsiMsk(int k) {
-        const int vector_size = d * d * s;
-        std::vector<double> msk(vector_size, 0);
-
+        std::vector<double> msk(max_batch, 0);
+        
         #pragma omp parallel for collapse(2) schedule(static)
         for (int i = 0; i < s; i++) {
             for (int j = i * d * d + k * d; j < i * d * d + k * d + d; j++) {
@@ -53,76 +200,169 @@ public:
     }
 
     Ciphertext<DCRTPoly> eval_mult(const Ciphertext<DCRTPoly> &matA,
-                                   const Ciphertext<DCRTPoly> &matB) override {
-        int num_slots = 1<<16;
+                                  const Ciphertext<DCRTPoly> &matB) override {
         auto matrixC = this->getZero()->Clone();
-
         auto matrixA = matA->Clone();
         auto matrixB = matB->Clone();
+        std::vector<Ciphertext<DCRTPoly>> Tilde_A(B);
+        std::vector<Ciphertext<DCRTPoly>> Tilde_B(B);
 
-        Ciphertext<DCRTPoly> Tilde_A[B];
-        Ciphertext<DCRTPoly> Tilde_B[B];
-
-        for (int i = 0; i < log2(s); i++) {
-            auto tmp = rot.rotate(matrixA, (1 << i) - d * d * (1 << i));
-            m_cc->EvalAddInPlace(matrixA, tmp);
-        }
-        for (int i = 0; i < log2(s); i++) {
-            auto tmp = rot.rotate(matrixB, d * (1 << i) - d * d * (1 << i));
-            m_cc->EvalAddInPlace(matrixB, tmp);
-        }
-
-        for (int i = 0; i < B; i++) {
-            auto phi_si = m_cc->MakeCKKSPackedPlaintext(
-                generatePhiMsk(s * i), 1, 0, nullptr, num_slots);
-            auto tmp = m_cc->EvalMult(matrixA, phi_si);
-            tmp = rot.rotate(tmp, s * i);
-            for (int j = 0; j < log2(d); j++) {
-                m_cc->EvalAddInPlace(tmp, rot.rotate(tmp, -(1 << j)));
+        #pragma omp parallel sections
+        {
+            #pragma omp section
+            {
+                for (int i = 0; i < log2(s); i++) {
+                    auto tmp = rot.rotate(matrixA, (1 << i) - d * d * (1 << i));
+                    m_cc->EvalAddInPlace(matrixA, tmp);
+                }
             }
-            Tilde_A[i] = tmp;
-        }
-
-        for (int i = 0; i < B; i++) {
-            auto psi_si = m_cc->MakeCKKSPackedPlaintext(
-                generatePsiMsk(s * i), 1, 0, nullptr, num_slots);
-            auto tmp = m_cc->EvalMult(matrixB, psi_si);
-            tmp = rot.rotate(tmp, s * i * d);
-            for (int j = 0; j < log2(d); j++) {
-                m_cc->EvalAddInPlace(tmp, rot.rotate(tmp, -(1 << j) * d));
+            
+            #pragma omp section
+            {
+                for (int i = 0; i < log2(s); i++) {
+                    auto tmp = rot.rotate(matrixB, d * (1 << i) - d * d * (1 << i));
+                    m_cc->EvalAddInPlace(matrixB, tmp);
+                }
             }
-            Tilde_B[i] = tmp;
         }
 
+        // Targeting 64 by 64 matrix
+        // Note: B=4, s=16
+        #pragma omp parallel
+        {
+            #pragma omp for nowait
+            for (int i = 0; i < B; i++) {
+                auto phi_si = m_cc->MakeCKKSPackedPlaintext(
+                    generatePhiMsk(s * i), 1, 0, nullptr, max_batch);
+                auto tmp = m_cc->EvalMult(matrixA, phi_si);
+                switch (i)
+                {
+                case 0:
+                    for (int j = 0; j < log2(d); j++) {
+                        auto rotated = rot.rotate(tmp, -(1 << j));
+                        m_cc->EvalAddInPlace(tmp, rotated);
+                    }
+                    break;
+                case 1:
+                    for (int j = 0; j < log2(s); j++) {
+                        auto rotated = rot.rotate(tmp, -(1 << j));
+                        m_cc->EvalAddInPlace(tmp, rotated);
+                    }
+                    for (int j = log2(s); j < log2(2*s); j++) {
+                        auto rotated = rot.rotate(tmp, (1 << j));
+                        m_cc->EvalAddInPlace(tmp, rotated);
+                    }
+                    for (int j = log2(2*s); j < log2(d); j++) {
+                        auto rotated = rot.rotate(tmp, -(1 << j));
+                        m_cc->EvalAddInPlace(tmp, rotated);
+                    }
+                    break;
+                case 2:
+                    for (int j = 0; j < log2(2*s); j++) {
+                        auto rotated = rot.rotate(tmp, -(1 << j));
+                        m_cc->EvalAddInPlace(tmp, rotated);
+                    }
+                    for (int j = log2(2*s); j < log2(d); j++) {
+                        auto rotated = rot.rotate(tmp, (1 << j));
+                        m_cc->EvalAddInPlace(tmp, rotated);
+                    }
+                    break;
+                case 3:
+                    for (int j = 0; j < log2(s); j++) {
+                        auto rotated = rot.rotate(tmp, -(1 << j));
+                        m_cc->EvalAddInPlace(tmp, rotated);
+                    }
+                    for (int j = log2(s); j < log2(d); j++) {
+                        auto rotated = rot.rotate(tmp, (1 << j));
+                        m_cc->EvalAddInPlace(tmp, rotated);
+                    }
+                    break;
+                default:
+                    break;
+                }
+                Tilde_A[i] = tmp;
+            }
+
+            #pragma omp for nowait
+            for (int i = 0; i < B; i++) {
+                auto psi_si = m_cc->MakeCKKSPackedPlaintext(
+                    generatePsiMsk(s * i), 1, 0, nullptr, max_batch);
+                auto tmp = m_cc->EvalMult(matrixB, psi_si);
+                switch (i)
+                {
+                case 0:
+                    for (int j = 0; j < log2(d); j++) {
+                        auto rotated = rot.rotate(tmp, -(1 << j) * d);
+                        m_cc->EvalAddInPlace(tmp, rotated);
+                    }
+                    break;
+                case 1:
+                    for (int j = 0; j < log2(s); j++) {
+                        auto rotated = rot.rotate(tmp, -(1 << j) * d);
+                        m_cc->EvalAddInPlace(tmp, rotated);
+                    }
+                    for (int j = log2(s); j < log2(2*s); j++) {
+                        auto rotated = rot.rotate(tmp, (1 << j) * d);
+                        m_cc->EvalAddInPlace(tmp, rotated);
+                    }
+                    for (int j = log2(2*s); j < log2(d); j++) {
+                        auto rotated = rot.rotate(tmp, -(1 << j) * d);
+                        m_cc->EvalAddInPlace(tmp, rotated);
+                    }
+                    break;
+                case 2:
+                    for (int j = 0; j < log2(2*s); j++) {
+                        auto rotated = rot.rotate(tmp, -(1 << j) * d);
+                        m_cc->EvalAddInPlace(tmp, rotated);
+                    }
+                    for (int j = log2(2*s); j < log2(d); j++) {
+                        auto rotated = rot.rotate(tmp, (1 << j) * d);
+                        m_cc->EvalAddInPlace(tmp, rotated);
+                    }
+                    break;
+                case 3:
+                    for (int j = 0; j < log2(s); j++) {
+                        auto rotated = rot.rotate(tmp, -(1 << j) * d);
+                        m_cc->EvalAddInPlace(tmp, rotated);
+                    }
+                    for (int j = log2(s); j < log2(d); j++) {
+                        auto rotated = rot.rotate(tmp, (1 << j) * d);
+                        m_cc->EvalAddInPlace(tmp, rotated);
+                    }
+                    break;
+                default:
+                    break;
+                }
+                Tilde_B[i] = tmp;
+            }
+        }
+       
+        #pragma omp for
         for (int i = 0; i < B; i++) {
-            m_cc->EvalAddInPlace(
-                matrixC, m_cc->EvalMultAndRelinearize(Tilde_A[i], Tilde_B[i]));
+            auto mult = m_cc->EvalMultAndRelinearize(Tilde_A[i], Tilde_B[i]);
+            #pragma omp critical
+            m_cc->EvalAddInPlace(matrixC, mult);
         }
 
         for (int i = 0; i < log2(s); i++) {
-            m_cc->EvalAddInPlace(matrixC,
-                                 rot.rotate(matrixC, (d * d) * (1 << i)));
+            auto rotated = rot.rotate(matrixC, (d * d) * (1 << i));
+            m_cc->EvalAddInPlace(matrixC, rotated);
         }
+
         matrixC->SetSlots(d * d);
         return matrixC;
     }
 
     Ciphertext<DCRTPoly> clean(const Ciphertext<DCRTPoly> &M) {
-        std::vector<double> msk(d * d * s, 0.0);
+        std::vector<double> msk(max_batch, 0.0);
+        
+        #pragma omp parallel for schedule(static)
         for (int i = 0; i < d * d; i++) {
             msk[i] = 1.0;
         }
-        auto pmsk =
-            m_cc->MakeCKKSPackedPlaintext(msk, 1, 0, nullptr, d * d * s);
-
+        
+        auto pmsk = m_cc->MakeCKKSPackedPlaintext(msk, 1, 0, nullptr, max_batch);
         return m_cc->EvalMult(M, pmsk);
-    }
-
-    Ciphertext<DCRTPoly> eval_mult_and_clean(const Ciphertext<DCRTPoly> &matA,
-                                             const Ciphertext<DCRTPoly> &matB) {
-
-        auto matC = eval_mult(matA, matB);
-        return clean(matC);
     }
 
     static constexpr int getMaxBatch() { return max_batch; }

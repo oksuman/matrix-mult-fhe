@@ -6,9 +6,8 @@ using namespace lbcrypto;
 
 class RotationComposer {
   private:
+    static constexpr int MAX_BATCH = 1 << 15; 
     CryptoContext<DCRTPoly> m_cc;
-    std::vector<int> m_rotIndices;
-    int MAX_BATCH;
 
     int getMaxBitPosition() const {
         return static_cast<int>(std::log2(MAX_BATCH));
@@ -24,14 +23,12 @@ class RotationComposer {
                 steps.push_back(stepSize);
             }
         }
-
         return steps;
     }
 
   public:
-    RotationComposer(CryptoContext<DCRTPoly> cc,
-                     const std::vector<int> &rotIndices, int batchSize)
-        : m_cc(cc), m_rotIndices(rotIndices), MAX_BATCH(batchSize) {}
+    RotationComposer(CryptoContext<DCRTPoly> cc)
+        : m_cc(cc){}
 
     Ciphertext<DCRTPoly> rotate(const Ciphertext<DCRTPoly> &input,
                                 int rotation) {
@@ -48,8 +45,6 @@ class RotationComposer {
 
         return result;
     }
-
-    const std::vector<int> &getRotationIndices() const { return m_rotIndices; }
 
     std::vector<int> decomposeForDebug(int rotation) const {
         return decomposeBinary(rotation);

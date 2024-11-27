@@ -8,11 +8,9 @@ set(SOURCES
 set(HEADERS
     encryption.h
     mat_inv.h
-    matrix_algo_multiPack.h
     matrix_algo_singlePack.h
     matrix_inversion_algo.h
     rotation.h
-    naive_inversion.h
 )
 
 add_library(matrix_operations STATIC ${SOURCES} ${HEADERS})

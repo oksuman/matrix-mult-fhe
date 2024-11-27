@@ -16,100 +16,50 @@ using namespace lbcrypto;
 template <int d> class MatrixInverseAS24TestFixture : public ::testing::Test {
   protected:
     void SetUp() override {
-        int multDepth;
-        uint32_t scaleModSize;
-        uint32_t firstModSize;
+        r = 30;
+        int multDepth = 29;
+        int max_batch = 1 << 16;
 
-        std::vector<uint32_t> levelBudget;
-        std::vector<uint32_t> bsgsDim;
+        uint32_t scaleModSize = 59;
+        uint32_t firstModSize = 60;
+  
+        std::vector<uint32_t> levelBudget = {4, 4};
+        std::vector<uint32_t> bsgsDim = {0, 0};
 
         CCParams<CryptoContextCKKSRNS> parameters;
-
-        switch (d) {
-        case 4:
-            r = 18;
-            multDepth = 31;
-            scaleModSize = 59;
-            firstModSize = 60;
-            parameters.SetFirstModSize(firstModSize);
-            levelBudget = {4, 4};
-            bsgsDim = {0, 0};
-            break;
-        case 8:
-            r = 21;
-            multDepth = 31;
-            scaleModSize = 59;
-            firstModSize = 60;
-            parameters.SetFirstModSize(firstModSize);
-            levelBudget = {4, 5};
-            bsgsDim = {0, 0};
-            break;
-        case 16:
-            r = 25;
-            multDepth = 31;
-            scaleModSize = 59;
-            firstModSize = 60;
-            parameters.SetFirstModSize(firstModSize);
-            levelBudget = {4, 5};
-            bsgsDim = {0, 0};
-            break;
-        case 32:
-            r = 28;
-            multDepth = 31;
-            scaleModSize = 59;
-            firstModSize = 60;
-            parameters.SetFirstModSize(firstModSize);
-            levelBudget = {4, 5};
-            bsgsDim = {0, 0};
-            break;
-        case 64:
-            r = 31;
-            multDepth = 31;
-            scaleModSize = 59;
-            firstModSize = 60;
-            parameters.SetFirstModSize(firstModSize);
-            levelBudget = {4, 5};
-            bsgsDim = {0, 0};
-            break;
-        default:
-            r = -1;
-        }
-
-        int max_batch = 1 << 16;
-        int s = std::min(max_batch / d / d, d);
-        int batchSize = d * d * s;
         parameters.SetMultiplicativeDepth(multDepth);
         parameters.SetScalingModSize(scaleModSize);
-        parameters.SetBatchSize(batchSize);
-        parameters.SetSecurityLevel(HEStd_128_classic);
+        parameters.SetFirstModSize(firstModSize);
+        parameters.SetRingDim(1<<17);
+        parameters.SetBatchSize(d * d);
+        parameters.SetSecurityLevel(HEStd_NotSet);
 
         m_cc = GenCryptoContext(parameters);
-        std::cout << "Ring Dimension: " << m_cc->GetRingDimension()
-                  << std::endl;
         m_cc->Enable(PKE);
         m_cc->Enable(KEYSWITCH);
         m_cc->Enable(LEVELEDSHE);
         m_cc->Enable(ADVANCEDSHE);
+        m_cc->Enable(FHE);
 
         auto keyPair = m_cc->KeyGen();
         m_publicKey = keyPair.publicKey;
         m_privateKey = keyPair.secretKey;
 
-        m_cc->Enable(FHE);
-        m_cc->EvalBootstrapSetup(levelBudget, bsgsDim, d * d);
-        m_cc->EvalBootstrapKeyGen(m_privateKey, d * d);
-
         std::vector<int> rotations;
-        for (int i = 1; i < d * d * s; i *= 2) {
+        for (int i = 1; i < max_batch; i *= 2) {
             rotations.push_back(i);
             rotations.push_back(-i);
         }
         m_cc->EvalRotateKeyGen(m_privateKey, rotations);
         m_cc->EvalMultKeyGen(m_privateKey);
+        
+        m_cc->EvalBootstrapSetup(levelBudget, bsgsDim, d * d);
+        m_cc->EvalBootstrapKeyGen(m_privateKey, d * d);
 
         m_enc = std::make_shared<Encryption>(m_cc, m_publicKey);
-        matInv = std::make_unique<MatrixInverse_AS24<d>>(
-            m_enc, m_cc, m_publicKey, rotations, r, multDepth);
+        matInv = std::make_unique<MatrixInverse_AS24Opt<d>>(
+            m_enc, m_cc, m_publicKey);
+        std::cout << "Ring Dimension: " << m_cc->GetRingDimension()<< std::endl;
     }
 
     std::vector<double> generateRandomMatrix() {
@@ -272,7 +222,7 @@ template <int d> class MatrixInverseAS24TestFixture : public ::testing::Test {
     PublicKey<DCRTPoly> m_publicKey;
     PrivateKey<DCRTPoly> m_privateKey;
     std::shared_ptr<Encryption> m_enc;
-    std::unique_ptr<MatrixInverse_AS24<d>> matInv;
+    std::unique_ptr<MatrixInverse_AS24Opt<d>> matInv;
     int r;
 };
 
@@ -292,7 +242,7 @@ TYPED_TEST_P(MatrixInverseAS24TestTyped, ComprehensiveInverseTest) {
     auto enc_matrix = this->m_enc->encryptInput(matrix);
     // auto inv_result = this->matInv->eval_inverse_debug(enc_matrix,
     // this->m_privateKey);
-    auto inv_result = this->matInv->eval_inverse(enc_matrix);
+    auto inv_result = this->matInv->eval_inverse_debug(enc_matrix, this->m_privateKey);
 
     Plaintext result;
     this->m_cc->Decrypt(this->m_privateKey, inv_result, &result);
@@ -317,8 +267,8 @@ TYPED_TEST_P(MatrixInverseAS24TestTyped, ComprehensiveInverseTest) {
                   << std::endl;
     }
 
-    EXPECT_LE(metrics.max_error, 0.01);
-    EXPECT_LT(metrics.avg_log_precision, -5.0);
+    EXPECT_LE(metrics.max_error, 0.0001);
+    EXPECT_LT(metrics.avg_log_precision, -10.0);
 
     std::cout << "All tests completed for AS24 " << d << "x" << d << " matrix\n"
               << std::endl;
@@ -327,13 +277,7 @@ TYPED_TEST_P(MatrixInverseAS24TestTyped, ComprehensiveInverseTest) {
 REGISTER_TYPED_TEST_SUITE_P(MatrixInverseAS24TestTyped,
                             ComprehensiveInverseTest);
 
-// using InverseTestSizes = ::testing::Types<std::integral_constant<size_t, 4>,
-//                                           std::integral_constant<size_t, 8>,
-//                                           std::integral_constant<size_t, 16>,
-//                                           std::integral_constant<size_t, 32>,
-//                                           std::integral_constant<size_t,
-//                                           64>>;
-using InverseTestSizes = ::testing::Types<std::integral_constant<size_t, 4>>;
+using InverseTestSizes = ::testing::Types<std::integral_constant<size_t, 64>>;
 
 INSTANTIATE_TYPED_TEST_SUITE_P(MatrixInverseAS24, MatrixInverseAS24TestTyped,
                                InverseTestSizes);

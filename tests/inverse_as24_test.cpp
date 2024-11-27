@@ -290,9 +290,9 @@ TYPED_TEST_P(MatrixInverseAS24TestTyped, ComprehensiveInverseTest) {
     auto matrix = this->generateRandomMatrix();
 
     auto enc_matrix = this->m_enc->encryptInput(matrix);
-    // auto inv_result = this->matInv->eval_inverse_debug(enc_matrix,
-    // this->m_privateKey);
-    auto inv_result = this->matInv->eval_inverse(enc_matrix);
+    auto inv_result = this->matInv->eval_inverse_debug(enc_matrix,
+    this->m_privateKey);
+    // auto inv_result = this->matInv->eval_inverse(enc_matrix);
 
     Plaintext result;
     this->m_cc->Decrypt(this->m_privateKey, inv_result, &result);
@@ -333,7 +333,7 @@ REGISTER_TYPED_TEST_SUITE_P(MatrixInverseAS24TestTyped,
 //                                           std::integral_constant<size_t, 32>,
 //                                           std::integral_constant<size_t,
 //                                           64>>;
-using InverseTestSizes = ::testing::Types<std::integral_constant<size_t, 4>>;
+using InverseTestSizes = ::testing::Types<std::integral_constant<size_t, 64>>;
 
 INSTANTIATE_TYPED_TEST_SUITE_P(MatrixInverseAS24, MatrixInverseAS24TestTyped,
                                InverseTestSizes);

@@ -199,25 +199,29 @@ class MatrixInverse_AS24 : public MatrixInverseBase<d>,
         auto MM_transposed = this->eval_mult(M, M_transposed);
 
         this->m_cc->Decrypt(m_privateKey, M_transposed, &debug_ptx);
+        debug_ptx->SetLength(10);
         debug_vec = debug_ptx->GetRealPackedValue();
         std::cout << "M^T: " << std::endl;
         std::cout << debug_vec << std::endl;
 
         this->m_cc->Decrypt(m_privateKey, MM_transposed, &debug_ptx);
+        debug_ptx->SetLength(10);
         debug_vec = debug_ptx->GetRealPackedValue();
         std::cout << "MM^T: " << std::endl;
         std::cout << debug_vec << std::endl;
 
-        auto trace = this->eval_trace(MM_transposed, d * d * d);
+        auto trace = this->eval_trace(MM_transposed, d * d * this->s);
 
         this->m_cc->Decrypt(m_privateKey, trace, &debug_ptx);
+        debug_ptx->SetLength(10);
         debug_vec = debug_ptx->GetRealPackedValue();
         std::cout << "trace: " << std::endl;
         std::cout << debug_vec << std::endl;
 
-        auto trace_reciprocal = this->m_cc->EvalDivide(trace, d, d * d, 50);
+        auto trace_reciprocal = this->m_cc->EvalDivide(trace, (d * d) / 3 - d, (d * d) / 3 + d, 5);
 
         this->m_cc->Decrypt(m_privateKey, trace_reciprocal, &debug_ptx);
+        debug_ptx->SetLength(10);
         debug_vec = debug_ptx->GetRealPackedValue();
         std::cout << "trace_reciprocal: " << std::endl;
         std::cout << debug_vec << std::endl;
@@ -231,11 +235,13 @@ class MatrixInverse_AS24 : public MatrixInverseBase<d>,
         A_bar = this->clean(A_bar);
 
         this->m_cc->Decrypt(m_privateKey, Y, &debug_ptx);
+        debug_ptx->SetLength(10);
         debug_vec = debug_ptx->GetRealPackedValue();
         std::cout << "Y: " << std::endl;
         std::cout << debug_vec << std::endl;
 
         this->m_cc->Decrypt(m_privateKey, A_bar, &debug_ptx);
+        debug_ptx->SetLength(10);
         debug_vec = debug_ptx->GetRealPackedValue();
         std::cout << "A_bar: " << std::endl;
         std::cout << debug_vec << std::endl;
@@ -243,8 +249,8 @@ class MatrixInverse_AS24 : public MatrixInverseBase<d>,
         for (int i = 0; i < this->r - 1; i++) {
 
             if ((int)Y->GetLevel() >= this->depth - 2) {
-                A_bar = m_cc->EvalBootstrap(A_bar, 2, 17);
-                Y = m_cc->EvalBootstrap(Y, 2, 17);
+                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+                Y = m_cc->EvalBootstrap(Y, 2, 18);
             }
             Y = this->eval_mult_and_clean(Y, this->m_cc->EvalAdd(pI, A_bar));
             A_bar = this->eval_mult_and_clean(A_bar, A_bar);
@@ -254,10 +260,12 @@ class MatrixInverse_AS24 : public MatrixInverseBase<d>,
 
             this->m_cc->Decrypt(m_privateKey, Y, &debug_ptx);
             debug_vec = debug_ptx->GetRealPackedValue();
+            debug_ptx->SetLength(10);
             std::cout << "Y: " << std::endl;
             std::cout << debug_vec << std::endl;
 
             this->m_cc->Decrypt(m_privateKey, A_bar, &debug_ptx);
+            debug_ptx->SetLength(10);
             debug_vec = debug_ptx->GetRealPackedValue();
             std::cout << "A_bar: " << std::endl;
             std::cout << debug_vec << std::endl;

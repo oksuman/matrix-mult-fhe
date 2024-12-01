@@ -62,7 +62,7 @@ public:
 
     std::vector<double> generateTransposeMsk(int k) {
         std::set<int> indices;
-        std::vector<double> msk(d * d, 0);
+        std::vector<double> msk(d*d, 0);
         
         if (k >= 0) {
             for (int j = 0; j < d - k; j++) {
@@ -74,7 +74,7 @@ public:
             }
         }
         
-        #pragma omp parallel for
+        // #pragma omp parallel for // need to check the performance
         for (int i = 0; i < d * d; i++) {
             if (indices.find(i) != indices.end()) {
                 msk[i] = 1.0;
@@ -84,43 +84,72 @@ public:
         return msk;
     }
 
-    Ciphertext<DCRTPoly> eval_transpose(Ciphertext<DCRTPoly> M, int batchSize) {
-        auto p = m_cc->MakeCKKSPackedPlaintext(generateTransposeMsk(0), 1, 0, nullptr, batchSize);
-        auto M_transposed = m_cc->EvalMult(M, p);
+    Ciphertext<DCRTPoly> eval_transpose(Ciphertext<DCRTPoly> M) {
+        std::vector<Ciphertext<DCRTPoly>> babyStepsOfM(8);
         
-        #pragma omp parallel
-        {
-            #pragma omp single
-            {
-                #pragma omp taskgroup
-                {
-                    #pragma omp task
-                    {
-                        for (int i = 1; i < d; i++) {
-                            auto p = m_cc->MakeCKKSPackedPlaintext(generateTransposeMsk(i));
-                            auto rotated = rot.rotate(M, (d - 1) * i);
-                            auto mult = m_cc->EvalMult(rotated, p);
-                            #pragma omp critical
-                            m_cc->EvalAddInPlace(M_transposed, mult);
-                        }
-                    }
-
-                    #pragma omp task
-                    {
-                        for (int i = -1; i > -d; i--) {
-                            auto p = m_cc->MakeCKKSPackedPlaintext(generateTransposeMsk(i));
-                            auto rotated = rot.rotate(M, (d - 1) * i);
-                            auto mult = m_cc->EvalMult(rotated, p);
-                            #pragma omp critical
-                            m_cc->EvalAddInPlace(M_transposed, mult);
-                        }
-                    }
-                }
-            }
+        #pragma omp parallel for
+        for(int i = 0; i < 8; i++) {
+            babyStepsOfM[i] = m_cc->EvalRotate(M, (d-1)*i);
+            // babyStepsOfM[i] = rot.rotate(M, (d-1)*i);
         }
         
+        auto M_transposed = this->getZero()->Clone();
+        
+        for(int i = -8; i < 8; i++) {
+            auto tmp = this->getZero()->Clone();
+            const int js = (i == -8) ? 1 : 0;
+            
+            #pragma omp parallel for
+            for(int j = js; j < 8; j++) {
+                auto vmsk = generateTransposeMsk(8*i+j);
+                vmsk = this->vectorRotate(vmsk, -8*(d-1)*i);
+                auto pmsk = m_cc->MakeCKKSPackedPlaintext(vmsk);
+                auto masked = m_cc->EvalMult(babyStepsOfM[j], pmsk);
+                
+                #pragma omp critical
+                {
+                    m_cc->EvalAddInPlace(tmp, masked);
+                }
+            }
+            
+            tmp = m_cc->EvalRotate(tmp, 8*(d-1)*i);
+            // tmp = rot.rotate(tmp, 8*(d-1)*i);
+            m_cc->EvalAddInPlace(M_transposed, tmp);
+        }
+        
+        // std::cout << rot.getRotationIndices() << std::endl;
         return M_transposed;
     }
+    // Ciphertext<DCRTPoly> eval_transpose(Ciphertext<DCRTPoly> M) {
+    //     // Initialize result with the first multiplication
+    //     auto p = m_cc->MakeCKKSPackedPlaintext(generateTransposeMsk(0));
+    //     auto M_transposed = m_cc->EvalMult(M, p);
+        
+    //     // Process positive rotations
+    //     #pragma omp for
+    //     for (int i = 1; i < d; i++) {
+    //         auto p = m_cc->MakeCKKSPackedPlaintext(generateTransposeMsk(i));
+    //         auto rotated = rot.rotate(M, (d - 1) * i);
+    //         auto mult = m_cc->EvalMult(rotated, p);
+            
+    //         #pragma omp critical
+    //         m_cc->EvalAddInPlace(M_transposed, mult);
+    //     }
+        
+    //     // Process negative rotations
+    //     #pragma omp for
+    //     for (int i = -1; i > -d; i--) {
+    //         auto p = m_cc->MakeCKKSPackedPlaintext(generateTransposeMsk(i));
+    //         auto rotated = rot.rotate(M, (d - 1) * i);
+    //         auto mult = m_cc->EvalMult(rotated, p);
+            
+    //         #pragma omp critical
+    //         m_cc->EvalAddInPlace(M_transposed, mult);
+    //     }
+        
+    //     std::cout << rot.getRotationIndices() << std::endl;
+    //     return M_transposed;
+    // }
 
     Ciphertext<DCRTPoly> eval_trace(Ciphertext<DCRTPoly> M, int batchSize) {
         std::vector<double> msk(batchSize, 0);
@@ -356,7 +385,7 @@ public:
     Ciphertext<DCRTPoly> clean(const Ciphertext<DCRTPoly> &M) {
         std::vector<double> msk(max_batch, 0.0);
         
-        #pragma omp parallel for schedule(static)
+        // #pragma omp parallel for schedule(static)
         for (int i = 0; i < d * d; i++) {
             msk[i] = 1.0;
         }
@@ -371,198 +400,228 @@ public:
 };
 
 
-// // Our proposed method, column-based approach, optimized for 64 * 64 matrix
-// template <int d> class MatrixMult_newColOpt : public MatrixOperationBase<d> {
-//   private:
-//     int max_batch;
-//     int s;
-//     int B;
-//     int num_slots;
-//     int ng; // giant-step
-//     int nb; // baby-step
-//     int np; // precomptutation for VecRots
-//   protected:
-//     using MatrixOperationBase<d>::rot;
-//     using MatrixOperationBase<d>::m_cc;
-//     using MatrixOperationBase<d>::vectorRotate;
 
-//   public:
-//     MatrixMult_newCol(std::shared_ptr<Encryption> enc,
-//                       CryptoContext<DCRTPoly> cc, PublicKey<DCRTPoly>
-//                       publicKey, std::vector<int> rotIndices)
-//         : MatrixOperationBase<d>(enc, cc, publicKey,
-//                                  rotIndices) // Parent initialization
-//     {
-//         max_batch = 1<<16;
-//         s = 16;
-//         B = 4;
-//         num_slots = 1<<16;
-//         ng = 4;
-//         nb = 16;
-//         np = 8;
-//     }
 
-//     std::vector<double> generateMaskVector(int batch_size, int k) {
-//         std::vector<double> result(batch_size, 0.0);
-//         for (int i = k * d * d; i < (k + 1) * d * d; ++i) {
-//             result[i] = 1.0;
-//         }
-//         return result;
-//     }
+// Our proposed method, column-based approach, optimized for 64 * 64 matrix
+template <int d> class MatrixMult_newColOpt : public MatrixOperationBase<d> {
+  private:
+    static constexpr int num_slots = 1<<16;
+    static constexpr int s = 16;
+    static constexpr int B = 4;
 
-//     std::vector<double> genDiagVector(int k, int diag_index) {
-//         std::vector<double> result(d * d, 0.0);
+    static constexpr int ng = 2; // giant-step
+    static constexpr int nb = 32; // baby-step
+    static constexpr int np = 8; // precomptutation for VecRots
+  protected:
+    using MatrixOperationBase<d>::rot;
+    using MatrixOperationBase<d>::m_cc;
+    using MatrixOperationBase<d>::vectorRotate;
 
-//         if (diag_index < 1 || diag_index > d * d ||
-//             (diag_index > d && diag_index < d * d - (d - 1))) {
-//             return result;
-//         }
+  public:
+    MatrixMult_newColOpt(std::shared_ptr<Encryption> enc,
+                      CryptoContext<DCRTPoly> cc, PublicKey<DCRTPoly>
+                      publicKey)
+        : MatrixOperationBase<d>(enc, cc, publicKey) 
+    {}
 
-//         for (int i = 0; i < d; ++i) {
-//             result[i * d + ((i + k) % d)] = 1.0;
-//         }
 
-//         int rotation = 0;
-//         bool right_rotation = false;
+    std::vector<double> generateMaskVector(int k) {
+        std::vector<double> result(num_slots, 0.0);
+        #pragma omp parallel for
+        for (int i = k * d * d; i < (k + 1) * d * d; ++i) {
+            result[i] = 1.0;
+        }
+        return result;
+    }
 
-//         if (diag_index <= d) {
-//             rotation = diag_index - 1;
-//         } else {
-//             right_rotation = true;
-//             rotation = d * d - diag_index + 1;
-//         }
+    std::vector<double> genDiagVector(int k, int diag_index) {
+        std::vector<double> result(d * d, 0.0);
+        if (diag_index < 1 || diag_index > d * d ||
+            (diag_index > d && diag_index < d * d - (d - 1))) {
+            return result;
+        }
 
-//         if (rotation > 0) {
-//             for (int i = 0; i < rotation; ++i) {
-//                 for (int j = 0; j < d; ++j) {
-//                     if (right_rotation) {
-//                         result[j * d + (d - 1 - i)] = 0.0;
-//                     } else {
-//                         result[j * d + i] = 0.0;
-//                     }
-//                 }
-//             }
-//         }
+        #pragma omp parallel for
+        for (int i = 0; i < d; ++i) {
+            result[i * d + ((i + k) % d)] = 1.0;
+        }
 
-//         std::vector<double> rotated(d * d, 0.0);
-//         for (int i = 0; i < d * d; ++i) {
-//             int new_pos;
-//             if (right_rotation) {
-//                 new_pos = (i + rotation) % d + (i / d) * d;
-//             } else {
-//                 new_pos = (i + d - rotation) % d + (i / d) * d;
-//             }
-//             rotated[new_pos] = result[i];
-//         }
+        int rotation = 0;
+        bool right_rotation = false;
+        if (diag_index <= d) {
+            rotation = diag_index - 1;
+        } else {
+            right_rotation = true;
+            rotation = d * d - diag_index + 1;
+        }
 
-//         return rotated;
-//     }
+        if (rotation > 0) {
+            #pragma omp parallel for collapse(2)
+            for (int i = 0; i < rotation; ++i) {
+                for (int j = 0; j < d; ++j) {
+                    if (right_rotation) {
+                        result[j * d + (d - 1 - i)] = 0.0;
+                    } else {
+                        result[j * d + i] = 0.0;
+                    }
+                }
+            }
+        }
 
-//     std::vector<double> genBatchDiagVector(int s, int k, int diag_index) {
-//         std::vector<double> result;
-//         result.reserve(d * d * s);
+        std::vector<double> rotated(d * d, 0.0);
+        #pragma omp parallel for
+        for (int i = 0; i < d * d; ++i) {
+            int new_pos;
+            if (right_rotation) {
+                new_pos = (i + rotation) % d + (i / d) * d;
+            } else {
+                new_pos = (i + d - rotation) % d + (i / d) * d;
+            }
+            rotated[new_pos] = result[i];
+        }
+        return rotated;
+    }
 
-//         for (int i = 0; i < s; ++i) {
-//             std::vector<double> diag_vector = genDiagVector(k + i,
-//             diag_index); result.insert(result.end(), diag_vector.begin(),
-//             diag_vector.end());
-//         }
+    std::vector<double> genBatchDiagVector(int s, int k, int diag_index) {
+        std::vector<double> result;
+        result.reserve(d * d * s);
 
-//         return result;
-//     }
+        for (int i = 0; i < s; ++i) {
+            std::vector<double> diag_vector = genDiagVector(k + i,
+            diag_index); result.insert(result.end(), diag_vector.begin(),
+            diag_vector.end());
+        }
 
-//     Ciphertext<DCRTPoly> vecRotsOpt(const std::vector<Ciphertext<DCRTPoly>>
-//     &matrixM, int is){
-//         auto rotsM = this->getZero()->Clone();
-//         for (int j = 0; j < s / np; j++) {
+        return result;
+    }
 
-//             auto T = this->getZero()->Clone();
+    Ciphertext<DCRTPoly> vecRotsOpt(const std::vector<Ciphertext<DCRTPoly>>&matrixM, int is){
+        auto rotsM = this->getZero()->Clone();
 
-//             for(int i=0; i<np; i++){
-//                 auto msk = generateMaskVector(num_slots, np * j + i);
-//                 msk = vectorRotate(msk, -is * d * s - j * d * np);
+        for (int j = 0; j < s / np; j++) {
 
-//                 auto pmsk = m_cc->MakeCKKSPackedPlaintext(msk, 1, 0, nullptr,
-//                 num_slots); m_cc->EvalAddInPlace(T,
-//                 m_cc->EvalMult(matrixM[i], pmsk));
+            auto T = this->getZero()->Clone();
 
-//             }
-//             m_cc->EvalAddInPlace(rotsM, rot.rotate(T, is * d * s + j * d *
-//             np));
-//         }
+            for(int i=0; i<np; i++){
+                auto msk = generateMaskVector(np * j + i);
+                msk = vectorRotate(msk, -is * d * s - j * d * np);
 
-//         return rotsM;
-//     }
+                auto pmsk = m_cc->MakeCKKSPackedPlaintext(msk, 1, 0, nullptr,num_slots);
+                m_cc->EvalAddInPlace(T, m_cc->EvalMult(matrixM[i], pmsk));
+            }
+            m_cc->EvalAddInPlace(rotsM, m_cc->EvalRotate(T, is * d * s + j * d * np));
+        }
 
-//     Ciphertext<DCRTPoly>
-//     eval_mult(const Ciphertext<DCRTPoly> &matrixA,
-//               const Ciphertext<DCRTPoly> &matrixB) override {
-//         auto matrixC = this->getZero()->Clone();
-//         Ciphertext<DCRTPoly> babyStepsOfA[nb];
-//         Ciphertext<DCRTPoly> babyStepsOfB[np];
-//         std::vector<Ciphertext<DCRTPoly>> babyStepsOfB;
+        return rotsM;
+    }
 
-//         precompA = m_cc->EvalFastEvalFastRotationPrecompute(matrixA);
-//         precompB = m_cc->EvalFastEvalFastRotationPrecompute(matrixB);
-//         // nb rotations required
-// #pragma omp parallel for
-//         for (int i = 0; i < nb; i++) {
-//             babyStepsOfA[i] = rot.rotate(matrixA, i);
-//         }
-//
-// #pragma omp parallel for
-// for (int i = 0; i < np; i++) {
-//     auto t = (rot.rotate(matrixB, i*d));
-//     t->SetSlots(num_slots);
-//     babyStepsOfB[i] = t;
-// }
-//
+    Ciphertext<DCRTPoly>
+    eval_mult(const Ciphertext<DCRTPoly> &matrixA,
+              const Ciphertext<DCRTPoly> &matrixB) override {
 
-//         for (int i = 0; i < B; i++) {
-//             auto batched_rotations_B = vecRotsOpt(babyStepsOfB, i);
-//             auto diagA = this->getZero()->Clone();
+        auto matrixC = this->getZero()->Clone();
 
-//             for (int k = -ng; k < ng; k++) {
-//                 if (k < 0) {
-//                     auto tmp = this->getZero()->Clone();
-//                     auto babyStep = (k == -ng) ? 1 : 0;
-//                     for (int j = d * d + k * nb + 1 + babyStep;
-//                          j <= d * d + (k + 1) * nb; j++) {
-//                         auto rotated_plain_vec = vectorRotate(
-//                             genBatchDiagVector(s, i * s, j), -k * nb);
-//                         m_cc->EvalAddInPlace(
-//                             tmp, m_cc->EvalMult(babyStepsOfA[babyStep],
-//                                                 m_cc->MakeCKKSPackedPlaintext(
-//                                                     rotated_plain_vec, 1, 0,
-//                                                     nullptr, num_slots)));
-//                         babyStep++;
-//                     }
-//                     m_cc->EvalAddInPlace(diagA, rot.rotate(tmp, k * nb));
-//                 } else { // k>=0
-//                     auto tmp = this->getZero()->Clone();
-//                     auto babyStep = 0;
-//                     for (int j = k * nb + 1; j <= (k + 1) * nb; j++) {
-//                         auto rotated_plain_vec = vectorRotate(
-//                             genBatchDiagVector(s, i * s, j), -k * nb);
-//                         m_cc->EvalAddInPlace(
-//                             tmp, m_cc->EvalMult(babyStepsOfA[babyStep],
-//                                                 m_cc->MakeCKKSPackedPlaintext(
-//                                                     rotated_plain_vec, 1, 0,
-//                                                     nullptr, num_slots)));
-//                         babyStep++;
-//                     }
-//                     m_cc->EvalAddInPlace(diagA, rot.rotate(tmp, k * nb));
-//                 }
-//             }
-//             m_cc->EvalAddInPlace(matrixC,
-//                                  m_cc->EvalMult(diagA, batched_rotations_B));
-//         }
-//         for (int i = 1; i <= log2(s); i++) {
-//             m_cc->EvalAddInPlace(matrixC,
-//                                  rot.rotate(matrixC, num_slots / (1 << i)));
-//         }
-//         matrixC->SetSlots(d * d);
+        // auto precompA = m_cc->EvalFastRotationPrecompute(matrixA);
+        // auto precompB = m_cc->EvalFastRotationPrecompute(matrixB);
 
-//         return matrixC;
-//     }
-// };
+        std::vector<Ciphertext<DCRTPoly>> babyStepsOfA(nb);
+        std::vector<Ciphertext<DCRTPoly>> babyStepsOfB(np);
+       
+       
+        #pragma omp parallel
+        {
+            #pragma omp for nowait
+            for (int i = 0; i < nb; i++) {
+                // if(i==0)
+                //    babyStepsOfA[i] = matrixA;
+                // else
+                // babyStepsOfA[i] = m_cc->EvalFastRotation(matrixA, i, 1<<18, precompA);
+                babyStepsOfA[i] = m_cc->EvalRotate(matrixA, i);
+                // babyStepsOfA[i] = rot.rotate(matrixA, i);
+            }
+            
+            #pragma omp for
+            for (int i = 0; i < np; i++) {
+                Ciphertext<DCRTPoly> t;
+                // if(i==0)
+                //     t = matrixB->Clone();
+                // else
+                // t = m_cc->EvalFastRotation(matrixB, i*d, 1<<18, precompB);
+                t = m_cc->EvalRotate(matrixB, i*d);
+                // t = rot.rotate(matrixB, i*d);
+                t->SetSlots(num_slots);
+                babyStepsOfB[i] = t;
+            }
+        }
+
+
+        for (int i = 0; i < B; i++) {
+            auto batched_rotations_B = vecRotsOpt(babyStepsOfB, i);
+            auto diagA = this->getZero()->Clone();
+            
+            for (int k = -ng; k < ng; k++) {
+                auto tmp = this->getZero()->Clone();
+                
+                if (k < 0) {
+                    const int startIdx = d * d + k * nb + 1;
+                    const int endIdx = d * d + (k + 1) * nb;
+                    
+                    #pragma omp parallel for
+                    for (int j = startIdx; j <= endIdx; j++) {
+                        // Calculate babyStep index directly from j
+                        int localBabyStep = (k == -ng && j == startIdx) ? 0 : (j - startIdx);
+                        
+                        auto rotated_plain_vec = vectorRotate(
+                            genBatchDiagVector(s, i * s, j), -k * nb);
+                            
+                        auto mult_result = m_cc->EvalMult(
+                            babyStepsOfA[localBabyStep],
+                            m_cc->MakeCKKSPackedPlaintext(
+                                rotated_plain_vec, 1, 0, nullptr, num_slots));
+                                
+                        #pragma omp critical
+                        {
+                            m_cc->EvalAddInPlace(tmp, mult_result);
+                        }
+                    }
+                } else {
+                    const int startIdx = k * nb + 1;
+                    const int endIdx = (k + 1) * nb;
+                    
+                    #pragma omp parallel for
+                    for (int j = startIdx; j <= endIdx; j++) {
+                        // Calculate babyStep index directly from j
+                        int localBabyStep = j - startIdx;
+                        
+                        auto rotated_plain_vec = vectorRotate(
+                            genBatchDiagVector(s, i * s, j), -k * nb);
+                            
+                        auto mult_result = m_cc->EvalMult(
+                            babyStepsOfA[localBabyStep],
+                            m_cc->MakeCKKSPackedPlaintext(
+                                rotated_plain_vec, 1, 0, nullptr, num_slots));
+                                
+                        #pragma omp critical
+                        {
+                            m_cc->EvalAddInPlace(tmp, mult_result);
+                        }
+                    }
+                }
+                
+                m_cc->EvalAddInPlace(diagA, m_cc->EvalRotate(tmp, k * nb));
+                // m_cc->EvalAddInPlace(diagA, rot.rotate(tmp, k * nb));
+            }
+            
+            m_cc->EvalAddInPlace(matrixC, m_cc->EvalMult(diagA, batched_rotations_B));
+        }
+
+        for (int i = 1; i <= log2(s); i++) {
+            m_cc->EvalAddInPlace(matrixC,
+                                 m_cc->EvalRotate(matrixC, num_slots / (1 << i)));
+        }
+        matrixC->SetSlots(d * d);
+
+        // std::cout << rot.getRotationIndices() << std::endl;
+        return matrixC;
+    }
+};

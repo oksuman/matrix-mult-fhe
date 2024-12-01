@@ -79,7 +79,7 @@ TYPED_TEST_P(MatrixOperationTestFixture, TransposeTest) {
     }
 
     auto enc_matrix = this->m_enc->encryptInput(matrix);
-    auto transpose_result = this->matOp->eval_transpose(enc_matrix, d*d);
+    auto transpose_result = this->matOp->eval_transpose(enc_matrix);
 
     Plaintext result;
     this->m_cc->Decrypt(this->m_privateKey, transpose_result, &result);

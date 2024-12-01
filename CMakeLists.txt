@@ -1,22 +1,28 @@
 cmake_minimum_required(VERSION 3.5.1)
 project(matrix-mult-fhe CXX)
 
-if(APPLE)
-    if(CMAKE_C_COMPILER_ID MATCHES "Clang")
-        set(OpenMP_C "${CMAKE_C_COMPILER}")
-        set(OpenMP_C_FLAGS "-Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include")
-        set(OpenMP_C_LIB_NAMES "omp")
-        set(OpenMP_omp_LIBRARY /opt/homebrew/opt/libomp/lib/libomp.dylib)
-    endif()
-    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-        set(OpenMP_CXX "${CMAKE_CXX_COMPILER}")
-        set(OpenMP_CXX_FLAGS "-Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include")
-        set(OpenMP_CXX_LIB_NAMES "omp")
-        set(OpenMP_omp_LIBRARY /opt/homebrew/opt/libomp/lib/libomp.dylib)
-    endif()
+# Basic project settings
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_BUILD_TYPE Release FORCE)
+
+# Performance optimization settings
+set(WITH_NATIVEOPT ON FORCE)
+set(NATIVE_SIZE 64 CACHE STRING "Word size for small integers (32/64)") # 64 for general use, 32 for moduli <= 28 bits
+option(WITH_OPENMP "Enable OpenMP support" ON)
+
+# Build options
+option(BUILD_STATIC "Set to ON to include static versions of the library" OFF)
+option(ENABLE_PRINT_PT "Enable PRINT_PT macro" OFF)
+
+# Find required packages
+find_package(OpenFHE CONFIG REQUIRED)
+if(OpenFHE_FOUND)
+    message(STATUS "Found OpenFHE")
+else()
+    message(FATAL_ERROR "OpenFHE not found")
 endif()
 
-# OpenMP package finding
 find_package(OpenMP REQUIRED)
 if(OpenMP_CXX_FOUND)
     message(STATUS "Found OpenMP: ${OpenMP_CXX_VERSION}")
@@ -24,42 +30,16 @@ else()
     message(FATAL_ERROR "OpenMP not found")
 endif()
 
-# Compiler settings
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+# Compiler flags
+set(CMAKE_CXX_FLAGS "${OpenFHE_CXX_FLAGS} ${CMAKE_CXX_FLAGS}")
+if(OpenMP_CXX_FOUND)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
+endif()
 
 # Optimization flags
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=native")
 endif()
-
-# Compiler warning flags
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-error=c++17-attribute-extensions")
-endif()
-
-# Build options
-option(BUILD_STATIC "Set to ON to include static versions of the library" OFF)
-set(BENCHMARK_ENABLE_TESTING OFF)
-set(BENCHMARK_ENABLE_WERROR OFF)
-
-# External dependencies
-add_subdirectory(external/googletest)
-add_subdirectory(external/benchmark)
-enable_testing()
-
-# OpenFHE
-find_package(OpenFHE CONFIG REQUIRED)
-if (OpenFHE_FOUND)
-    message(STATUS "FOUND PACKAGE OpenFHE")
-else()
-    message(FATAL_ERROR "PACKAGE OpenFHE NOT FOUND")
-endif()
-
-# OpenFHE compiler flags
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenFHE_CXX_FLAGS}")
 
 # Include directories
 include_directories(
@@ -69,8 +49,7 @@ include_directories(
     ${OpenFHE_INCLUDE}/core
     ${OpenFHE_INCLUDE}/pke
     ${OpenFHE_INCLUDE}/binfhe
-    ${PROJECT_SOURCE_DIR}/src
-    ${PROJECT_SOURCE_DIR}/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 # Library directories
@@ -79,34 +58,40 @@ link_directories(
     ${OPENMP_LIBRARIES}
 )
 
-# Utils library (header-only)
-add_library(utils INTERFACE)
-target_include_directories(utils
-    INTERFACE
-    ${CMAKE_CURRENT_SOURCE_DIR}/utils
+# Source files
+set(SOURCES
+    encryption.cpp
+    main.cpp
 )
 
-# Matrix operations library
-add_library(matrix_operations STATIC
-    src/encryption.cpp
+# Header files
+set(HEADERS
+    encryption.h
+    mat_inv.h
+    matrix_algo_singlePack.h
+    matrix_inversion_algo.h
 )
 
-# Link dependencies
-target_link_libraries(matrix_operations
-    PUBLIC
-    OPENFHEcore
-    OPENFHEpke
-    utils
-    OpenMP::OpenMP_CXX  # Add OpenMP linking
-)
+# Main executable
+add_executable(app ${SOURCES} ${HEADERS})
 
-# Set include directories for matrix_operations
-target_include_directories(matrix_operations
-    PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
+# Link libraries
+if(BUILD_STATIC)
+    set(CMAKE_EXE_LINKER_FLAGS "${OpenFHE_EXE_LINKER_FLAGS} -static")
+    target_link_libraries(app PRIVATE ${OpenFHE_STATIC_LIBRARIES} OpenMP::OpenMP_CXX)
+else()
+    set(CMAKE_EXE_LINKER_FLAGS ${OpenFHE_EXE_LINKER_FLAGS})
+    target_link_libraries(app PRIVATE ${OpenFHE_SHARED_LIBRARIES} OpenMP::OpenMP_CXX)
+endif()
 
-# Add project subdirectories
-add_subdirectory(tests)
-# add_subdirectory(benchmark)
-add_subdirectory(utils)
+# Enable PRINT_PT macro if requested
+if(ENABLE_PRINT_PT)
+    target_compile_definitions(app PRIVATE ENABLE_PRINT_PT)
+endif()
+
+# Display important configuration information
+message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+message(STATUS "Native optimizations: ${WITH_NATIVEOPT}")
+message(STATUS "Native size: ${NATIVE_SIZE}")
+message(STATUS "OpenMP enabled: ${WITH_OPENMP}")
+message(STATUS "Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")

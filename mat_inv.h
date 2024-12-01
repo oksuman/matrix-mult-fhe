@@ -1,45 +1,39 @@
-#include "openfhe.h"
+#pragma once
 
-// header files needed for serialization
+#include "openfhe.h"
 #include "ciphertext-ser.h"
 #include "cryptocontext-ser.h"
 #include "key/key-ser.h"
 #include "scheme/ckksrns/ckksrns-ser.h"
-
 #include <functional>
 #include <omp.h>
-
-#include "comparison.h"
-#include "matMult_algo.h"
+#include "matrix_inversion_algo.h"
+#include "matrix_algo_singlePack.h"
+#include "encryption.h"
 
 using namespace lbcrypto;
 
-/*
- *   This code is for matrix-iunversion challnege
- */
-
-template <int d> struct MatMultContext {
+template <int d> 
+struct MatInvContext {
     CryptoContext<DCRTPoly> m_cc;
     PublicKey<DCRTPoly> m_PublicKey;
     Ciphertext<DCRTPoly> input_matrix;
     Ciphertext<DCRTPoly> output_matrix;
     std::string m_outputLocation;
 
-    SortContext(std::string ccLocation, std::string pubKeyLocation,
+    MatInvContext(std::string ccLocation, std::string pubKeyLocation,
                 std::string multKeyLocation, std::string rotKeyLocation,
                 std::string matrixLocation, std::string outputLocation)
         : m_outputLocation(outputLocation) {
-
         initCC(ccLocation, pubKeyLocation, multKeyLocation, rotKeyLocation,
-               matrixLocation, outputLocation);
-    };
+               matrixLocation);
+    }
 
     void initCC(std::string ccLocation, std::string pubKeyLocation,
                 std::string multKeyLocation, std::string rotKeyLocation,
-                std::string matrixLocation, std::string outputLocation) {
+                std::string matrixLocation) {
         if (!Serial::DeserializeFromFile(ccLocation, m_cc, SerType::BINARY)) {
-            std::cerr << "Could not deserialize cryptocontext file"
-                      << std::endl;
+            std::cerr << "Could not deserialize cryptocontext file" << std::endl;
             std::exit(1);
         }
 
@@ -79,32 +73,17 @@ template <int d> struct MatMultContext {
         }
     }
 
-    void eval(SortAlgo algo, std::vector<int> rotIndices) {
+    void eval() {
         auto enc = std::make_shared<Encryption>(m_cc, m_PublicKey);
-
-        // std::unique_ptr<SortBase<N>> sorter;
-
-        // switch (algo) {
-        // case SortAlgo::DirectSort:
-        // default:
-        //     sorter = std::make_unique<DirectSort<N>>(m_cc, m_PublicKey,
-        //                                              rotIndices, enc);
-        //     break;
-        // case SortAlgo::BitonicSort:
-        //     sorter = std::make_unique<BitonicSort<N>>(m_cc, m_PublicKey,
-        //                                               rotIndices, enc);
-        //     break;
-        // }
-
-        // auto Cfg = SignConfig(CompositeSignConfig(4, 3, 3));
-        // output_array = sorter->sort(input_array, SignFunc::CompositeSign,
-        // Cfg);
+        auto inverter = std::make_unique<MatrixInverse_newColOpt<d>>(enc, m_cc, m_PublicKey);
+        output_matrix = inverter->eval_inverse(input_matrix);
     }
 
     void deserializeOutput() {
         if (!Serial::SerializeToFile(m_outputLocation, output_matrix,
                                      SerType::BINARY)) {
-            std::cerr << " Error writing ciphertext 1" << std::endl;
+            std::cerr << "Error writing ciphertext" << std::endl;
+            std::exit(1);
         }
     }
 };

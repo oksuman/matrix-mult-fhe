@@ -6,7 +6,6 @@
 #endif
 
 #include "encryption.h"
-#include "rotation.h"
 #include <memory>
 #include <openfhe.h>
 #include <vector>
@@ -19,7 +18,6 @@ protected:
     std::shared_ptr<Encryption> m_enc;
     CryptoContext<DCRTPoly> m_cc;
     PublicKey<DCRTPoly> m_PublicKey;
-    RotationComposer rot;
     const Ciphertext<DCRTPoly> m_zeroCache;
 
     virtual Ciphertext<DCRTPoly> createZeroCache() {
@@ -32,7 +30,7 @@ public:
                        CryptoContext<DCRTPoly> cc,
                        PublicKey<DCRTPoly> publicKey)
         : m_enc(enc), m_cc(cc), m_PublicKey(publicKey),
-          rot(cc), m_zeroCache(createZeroCache()) {}
+         m_zeroCache(createZeroCache()) {}
 
     virtual ~MatrixOperationBase() = default;
 
@@ -74,7 +72,6 @@ public:
             }
         }
         
-        // #pragma omp parallel for // need to check the performance
         for (int i = 0; i < d * d; i++) {
             if (indices.find(i) != indices.end()) {
                 msk[i] = 1.0;
@@ -90,7 +87,6 @@ public:
         #pragma omp parallel for
         for(int i = 0; i < 8; i++) {
             babyStepsOfM[i] = m_cc->EvalRotate(M, (d-1)*i);
-            // babyStepsOfM[i] = rot.rotate(M, (d-1)*i);
         }
         
         auto M_transposed = this->getZero()->Clone();
@@ -113,44 +109,12 @@ public:
             }
             
             tmp = m_cc->EvalRotate(tmp, 8*(d-1)*i);
-            // tmp = rot.rotate(tmp, 8*(d-1)*i);
             m_cc->EvalAddInPlace(M_transposed, tmp);
         }
         
-        // std::cout << rot.getRotationIndices() << std::endl;
         return M_transposed;
     }
-    // Ciphertext<DCRTPoly> eval_transpose(Ciphertext<DCRTPoly> M) {
-    //     // Initialize result with the first multiplication
-    //     auto p = m_cc->MakeCKKSPackedPlaintext(generateTransposeMsk(0));
-    //     auto M_transposed = m_cc->EvalMult(M, p);
-        
-    //     // Process positive rotations
-    //     #pragma omp for
-    //     for (int i = 1; i < d; i++) {
-    //         auto p = m_cc->MakeCKKSPackedPlaintext(generateTransposeMsk(i));
-    //         auto rotated = rot.rotate(M, (d - 1) * i);
-    //         auto mult = m_cc->EvalMult(rotated, p);
-            
-    //         #pragma omp critical
-    //         m_cc->EvalAddInPlace(M_transposed, mult);
-    //     }
-        
-    //     // Process negative rotations
-    //     #pragma omp for
-    //     for (int i = -1; i > -d; i--) {
-    //         auto p = m_cc->MakeCKKSPackedPlaintext(generateTransposeMsk(i));
-    //         auto rotated = rot.rotate(M, (d - 1) * i);
-    //         auto mult = m_cc->EvalMult(rotated, p);
-            
-    //         #pragma omp critical
-    //         m_cc->EvalAddInPlace(M_transposed, mult);
-    //     }
-        
-    //     std::cout << rot.getRotationIndices() << std::endl;
-    //     return M_transposed;
-    // }
-
+ 
     Ciphertext<DCRTPoly> eval_trace(Ciphertext<DCRTPoly> M, int batchSize) {
         std::vector<double> msk(batchSize, 0);
         
@@ -162,7 +126,7 @@ public:
         auto trace = m_cc->EvalMult(M, m_cc->MakeCKKSPackedPlaintext(msk));
         
         for (int i = 1; i <= log2(batchSize); i++) {
-            auto rotated = rot.rotate(trace, batchSize / (1 << i));
+            auto rotated = m_cc->EvalRotate(trace, batchSize / (1 << i));
             m_cc->EvalAddInPlace(trace, rotated);
         }
         
@@ -172,235 +136,6 @@ public:
     virtual const Ciphertext<DCRTPoly> &getZero() const { return m_zeroCache; }
     constexpr size_t getMatrixSize() const { return d; }
 };
-
-// For test
-template <int d> class TestMatrixOperation : public MatrixOperationBase<d> {
-  protected:
-    using MatrixOperationBase<d>::rot;
-    using MatrixOperationBase<d>::m_cc;
-
-  public:
-    using MatrixOperationBase<d>::MatrixOperationBase;
-
-    Ciphertext<DCRTPoly>
-    eval_mult(const Ciphertext<DCRTPoly> &matrixA,
-              const Ciphertext<DCRTPoly> &matrixB) override {
-        return nullptr;
-    }
-};
-
-// optimized for 64 by 64 matrix inversion 
-template <int d>
-class MatrixMult_AS24Opt : public MatrixOperationBase<d> {
-private:
-    static constexpr int B = 4;
-    static constexpr int s = 16;
-
-protected:
-    static constexpr int max_batch = 1 << 16;
-    using MatrixOperationBase<d>::rot;
-    using MatrixOperationBase<d>::m_cc;
-
-public:
-    MatrixMult_AS24Opt(std::shared_ptr<Encryption> enc, CryptoContext<DCRTPoly> cc,
-                       PublicKey<DCRTPoly> publicKey)
-        : MatrixOperationBase<d>(enc, cc, publicKey) {}
-
-    std::vector<double> generatePhiMsk(int k) {
-        std::vector<double> msk(max_batch, 0);
-        
-        #pragma omp parallel for schedule(static)
-        for (int i = k; i < max_batch; i += d) {
-            msk[i] = 1;
-        }
-        return msk;
-    }
-
-    std::vector<double> generatePsiMsk(int k) {
-        std::vector<double> msk(max_batch, 0);
-        
-        #pragma omp parallel for collapse(2) schedule(static)
-        for (int i = 0; i < s; i++) {
-            for (int j = i * d * d + k * d; j < i * d * d + k * d + d; j++) {
-                msk[j] = 1;
-            }
-        }
-        return msk;
-    }
-
-    Ciphertext<DCRTPoly> eval_mult(const Ciphertext<DCRTPoly> &matA,
-                                  const Ciphertext<DCRTPoly> &matB) override {
-        auto matrixC = this->getZero()->Clone();
-        auto matrixA = matA->Clone();
-        auto matrixB = matB->Clone();
-        std::vector<Ciphertext<DCRTPoly>> Tilde_A(B);
-        std::vector<Ciphertext<DCRTPoly>> Tilde_B(B);
-
-        #pragma omp parallel sections
-        {
-            #pragma omp section
-            {
-                for (int i = 0; i < log2(s); i++) {
-                    auto tmp = rot.rotate(matrixA, (1 << i) - d * d * (1 << i));
-                    m_cc->EvalAddInPlace(matrixA, tmp);
-                }
-            }
-            
-            #pragma omp section
-            {
-                for (int i = 0; i < log2(s); i++) {
-                    auto tmp = rot.rotate(matrixB, d * (1 << i) - d * d * (1 << i));
-                    m_cc->EvalAddInPlace(matrixB, tmp);
-                }
-            }
-        }
-
-        // Targeting 64 by 64 matrix
-        // Note: B=4, s=16
-        #pragma omp parallel
-        {
-            #pragma omp for nowait
-            for (int i = 0; i < B; i++) {
-                auto phi_si = m_cc->MakeCKKSPackedPlaintext(
-                    generatePhiMsk(s * i), 1, 0, nullptr, max_batch);
-                auto tmp = m_cc->EvalMult(matrixA, phi_si);
-                switch (i)
-                {
-                case 0:
-                    for (int j = 0; j < log2(d); j++) {
-                        auto rotated = rot.rotate(tmp, -(1 << j));
-                        m_cc->EvalAddInPlace(tmp, rotated);
-                    }
-                    break;
-                case 1:
-                    for (int j = 0; j < log2(s); j++) {
-                        auto rotated = rot.rotate(tmp, -(1 << j));
-                        m_cc->EvalAddInPlace(tmp, rotated);
-                    }
-                    for (int j = log2(s); j < log2(2*s); j++) {
-                        auto rotated = rot.rotate(tmp, (1 << j));
-                        m_cc->EvalAddInPlace(tmp, rotated);
-                    }
-                    for (int j = log2(2*s); j < log2(d); j++) {
-                        auto rotated = rot.rotate(tmp, -(1 << j));
-                        m_cc->EvalAddInPlace(tmp, rotated);
-                    }
-                    break;
-                case 2:
-                    for (int j = 0; j < log2(2*s); j++) {
-                        auto rotated = rot.rotate(tmp, -(1 << j));
-                        m_cc->EvalAddInPlace(tmp, rotated);
-                    }
-                    for (int j = log2(2*s); j < log2(d); j++) {
-                        auto rotated = rot.rotate(tmp, (1 << j));
-                        m_cc->EvalAddInPlace(tmp, rotated);
-                    }
-                    break;
-                case 3:
-                    for (int j = 0; j < log2(s); j++) {
-                        auto rotated = rot.rotate(tmp, -(1 << j));
-                        m_cc->EvalAddInPlace(tmp, rotated);
-                    }
-                    for (int j = log2(s); j < log2(d); j++) {
-                        auto rotated = rot.rotate(tmp, (1 << j));
-                        m_cc->EvalAddInPlace(tmp, rotated);
-                    }
-                    break;
-                default:
-                    break;
-                }
-                Tilde_A[i] = tmp;
-            }
-
-            #pragma omp for nowait
-            for (int i = 0; i < B; i++) {
-                auto psi_si = m_cc->MakeCKKSPackedPlaintext(
-                    generatePsiMsk(s * i), 1, 0, nullptr, max_batch);
-                auto tmp = m_cc->EvalMult(matrixB, psi_si);
-                switch (i)
-                {
-                case 0:
-                    for (int j = 0; j < log2(d); j++) {
-                        auto rotated = rot.rotate(tmp, -(1 << j) * d);
-                        m_cc->EvalAddInPlace(tmp, rotated);
-                    }
-                    break;
-                case 1:
-                    for (int j = 0; j < log2(s); j++) {
-                        auto rotated = rot.rotate(tmp, -(1 << j) * d);
-                        m_cc->EvalAddInPlace(tmp, rotated);
-                    }
-                    for (int j = log2(s); j < log2(2*s); j++) {
-                        auto rotated = rot.rotate(tmp, (1 << j) * d);
-                        m_cc->EvalAddInPlace(tmp, rotated);
-                    }
-                    for (int j = log2(2*s); j < log2(d); j++) {
-                        auto rotated = rot.rotate(tmp, -(1 << j) * d);
-                        m_cc->EvalAddInPlace(tmp, rotated);
-                    }
-                    break;
-                case 2:
-                    for (int j = 0; j < log2(2*s); j++) {
-                        auto rotated = rot.rotate(tmp, -(1 << j) * d);
-                        m_cc->EvalAddInPlace(tmp, rotated);
-                    }
-                    for (int j = log2(2*s); j < log2(d); j++) {
-                        auto rotated = rot.rotate(tmp, (1 << j) * d);
-                        m_cc->EvalAddInPlace(tmp, rotated);
-                    }
-                    break;
-                case 3:
-                    for (int j = 0; j < log2(s); j++) {
-                        auto rotated = rot.rotate(tmp, -(1 << j) * d);
-                        m_cc->EvalAddInPlace(tmp, rotated);
-                    }
-                    for (int j = log2(s); j < log2(d); j++) {
-                        auto rotated = rot.rotate(tmp, (1 << j) * d);
-                        m_cc->EvalAddInPlace(tmp, rotated);
-                    }
-                    break;
-                default:
-                    break;
-                }
-                Tilde_B[i] = tmp;
-            }
-        }
-       
-        #pragma omp for
-        for (int i = 0; i < B; i++) {
-            auto mult = m_cc->EvalMultAndRelinearize(Tilde_A[i], Tilde_B[i]);
-            #pragma omp critical
-            m_cc->EvalAddInPlace(matrixC, mult);
-        }
-
-        for (int i = 0; i < log2(s); i++) {
-            auto rotated = rot.rotate(matrixC, (d * d) * (1 << i));
-            m_cc->EvalAddInPlace(matrixC, rotated);
-        }
-
-        matrixC->SetSlots(d * d);
-        return matrixC;
-    }
-
-    Ciphertext<DCRTPoly> clean(const Ciphertext<DCRTPoly> &M) {
-        std::vector<double> msk(max_batch, 0.0);
-        
-        // #pragma omp parallel for schedule(static)
-        for (int i = 0; i < d * d; i++) {
-            msk[i] = 1.0;
-        }
-        
-        auto pmsk = m_cc->MakeCKKSPackedPlaintext(msk, 1, 0, nullptr, max_batch);
-        return m_cc->EvalMult(M, pmsk);
-    }
-
-    static constexpr int getMaxBatch() { return max_batch; }
-    static constexpr int getB() { return B; }
-    static constexpr int getS() { return s; }
-};
-
-
-
 
 // Our proposed method, column-based approach, optimized for 64 * 64 matrix
 template <int d> class MatrixMult_newColOpt : public MatrixOperationBase<d> {
@@ -413,7 +148,6 @@ template <int d> class MatrixMult_newColOpt : public MatrixOperationBase<d> {
     static constexpr int nb = 32; // baby-step
     static constexpr int np = 8; // precomptutation for VecRots
   protected:
-    using MatrixOperationBase<d>::rot;
     using MatrixOperationBase<d>::m_cc;
     using MatrixOperationBase<d>::vectorRotate;
 
@@ -520,10 +254,6 @@ template <int d> class MatrixMult_newColOpt : public MatrixOperationBase<d> {
               const Ciphertext<DCRTPoly> &matrixB) override {
 
         auto matrixC = this->getZero()->Clone();
-
-        // auto precompA = m_cc->EvalFastRotationPrecompute(matrixA);
-        // auto precompB = m_cc->EvalFastRotationPrecompute(matrixB);
-
         std::vector<Ciphertext<DCRTPoly>> babyStepsOfA(nb);
         std::vector<Ciphertext<DCRTPoly>> babyStepsOfB(np);
        
@@ -532,23 +262,13 @@ template <int d> class MatrixMult_newColOpt : public MatrixOperationBase<d> {
         {
             #pragma omp for nowait
             for (int i = 0; i < nb; i++) {
-                // if(i==0)
-                //    babyStepsOfA[i] = matrixA;
-                // else
-                // babyStepsOfA[i] = m_cc->EvalFastRotation(matrixA, i, 1<<18, precompA);
                 babyStepsOfA[i] = m_cc->EvalRotate(matrixA, i);
-                // babyStepsOfA[i] = rot.rotate(matrixA, i);
             }
             
             #pragma omp for
             for (int i = 0; i < np; i++) {
                 Ciphertext<DCRTPoly> t;
-                // if(i==0)
-                //     t = matrixB->Clone();
-                // else
-                // t = m_cc->EvalFastRotation(matrixB, i*d, 1<<18, precompB);
                 t = m_cc->EvalRotate(matrixB, i*d);
-                // t = rot.rotate(matrixB, i*d);
                 t->SetSlots(num_slots);
                 babyStepsOfB[i] = t;
             }
@@ -609,7 +329,6 @@ template <int d> class MatrixMult_newColOpt : public MatrixOperationBase<d> {
                 }
                 
                 m_cc->EvalAddInPlace(diagA, m_cc->EvalRotate(tmp, k * nb));
-                // m_cc->EvalAddInPlace(diagA, rot.rotate(tmp, k * nb));
             }
             
             m_cc->EvalAddInPlace(matrixC, m_cc->EvalMult(diagA, batched_rotations_B));
@@ -621,7 +340,6 @@ template <int d> class MatrixMult_newColOpt : public MatrixOperationBase<d> {
         }
         matrixC->SetSlots(d * d);
 
-        // std::cout << rot.getRotationIndices() << std::endl;
         return matrixC;
     }
 };

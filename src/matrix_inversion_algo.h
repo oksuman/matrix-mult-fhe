@@ -9,8 +9,8 @@ using namespace lbcrypto;
 // Base class for matrix inverse operations
 template <int d> class MatrixInverseBase {
   protected:
-    static constexpr int r = 23;
-    static constexpr int depth = 34;
+    static constexpr int r = 22;
+    static constexpr int depth = 49; // 2r+9 48
 
     virtual std::vector<double> initializeIdentityMatrix() {
         std::vector<double> identity(d*d, 0.0);
@@ -220,6 +220,7 @@ class MatrixInverse_newColOpt : public MatrixInverseBase<d>,
         : MatrixInverseBase<d>(), MatrixMult_newColOpt<d>(enc, cc, publicKey) {}
 
     Ciphertext<DCRTPoly> eval_inverse(const Ciphertext<DCRTPoly> &M) override {
+        omp_set_max_active_levels(2);
         std::vector<double> vI = this->initializeIdentityMatrix();
         Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI);
         Plaintext debug;
@@ -227,15 +228,21 @@ class MatrixInverse_newColOpt : public MatrixInverseBase<d>,
         auto M_transposed = this->eval_transpose(M);
         auto MM_transposed = this->eval_mult(M, M_transposed);
 
-        auto trace = this->eval_trace(MM_transposed, d * d);
-        auto trace_reciprocal =
-            this->m_cc->EvalDivide(trace, 1, (d * d) / 3 + d, 5);
+        // auto trace = this->eval_trace(MM_transposed, d * d);
+        // auto trace_reciprocal =
+        //     this->m_cc->EvalDivide(trace, 1, (d * d) / 3 + d, 5);
+        auto trace_reciprocal = 3.0 / (d*d);
 
         auto Y =
-            this->m_cc->EvalMultAndRelinearize(M_transposed, trace_reciprocal);
+            this->m_cc->EvalMult(M_transposed, trace_reciprocal);
         auto A_bar =
-            this->m_cc->EvalSub(pI, this->m_cc->EvalMultAndRelinearize(
+            this->m_cc->EvalSub(pI, this->m_cc->EvalMult(
                                         MM_transposed, trace_reciprocal));
+        // auto Y =
+        //     this->m_cc->EvalMultAndRelinearize(M_transposed, trace_reciprocal);
+        // auto A_bar =
+        //     this->m_cc->EvalSub(pI, this->m_cc->EvalMultAndRelinearize(
+        //                                 MM_transposed, trace_reciprocal));
        
         for (int i = 0; i < this->r - 1; i++) {
             auto identity = m_cc->MakeCKKSPackedPlaintext(vI, 1, A_bar->GetLevel(), nullptr, d*d);
@@ -243,16 +250,19 @@ class MatrixInverse_newColOpt : public MatrixInverseBase<d>,
             Y = this->eval_mult(Y, A_plus_I);
             A_bar = this->eval_mult(A_bar, A_bar);   
 
-            if ((int)Y->GetLevel() >= this->depth - 2) {
-                A_bar = m_cc->EvalBootstrap(A_bar, 2, 17);
-                Y = m_cc->EvalBootstrap(Y, 2, 18);
-            }
+            // if ((int)Y->GetLevel() >= this->depth - 2) {
+            //     A_bar = m_cc->EvalBootstrap(A_bar, 2, 17);
+            //     Y = m_cc->EvalBootstrap(Y, 2, 18);
+            // }
         }
         Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
         return Y;
     }
     
     Ciphertext<DCRTPoly> eval_inverse_debug(const Ciphertext<DCRTPoly> &M, PrivateKey<DCRTPoly> sk){
+        omp_set_max_active_levels(2);
+
+        
         std::vector<double> vI = this->initializeIdentityMatrix();
         Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI);
         Plaintext debug;
@@ -265,27 +275,11 @@ class MatrixInverse_newColOpt : public MatrixInverseBase<d>,
         std::cout << "Level of MMt: " << MM_transposed->GetLevel() << std::endl;
         std::cout << "MMt: " << debug << std::endl;
 
-
-        auto trace = this->eval_trace(MM_transposed, d * d);
-        m_cc->Decrypt(trace, sk, &debug);
-        debug->SetLength(10);
-        std::cout << "Level of trace: " << trace->GetLevel() << std::endl;
-        std::cout << "trace: " << debug << std::endl;
-
-        auto trace_reciprocal =
-            this->m_cc->EvalDivide(trace, 1, (d * d) / 3 + d, 5);
-        // auto trace_reciprocal =
-        //     this->m_cc->EvalDivide(trace, (d * d) / 3 - d, (d * d) / 3 + d, 5);
-        m_cc->Decrypt(trace_reciprocal, sk, &debug);
-        debug->SetLength(10);
-        std::cout << "Level of MMt: " << trace_reciprocal->GetLevel() << std::endl;
-        std::cout << "1/trace: " << debug << std::endl;
-
-
+        auto trace_reciprocal = 3.0 / (d*d);
         auto Y =
-            this->m_cc->EvalMultAndRelinearize(M_transposed, trace_reciprocal);
+            this->m_cc->EvalMult(M_transposed, trace_reciprocal);
         auto A_bar =
-            this->m_cc->EvalSub(pI, this->m_cc->EvalMultAndRelinearize(
+            this->m_cc->EvalSub(pI, this->m_cc->EvalMult(
                                         MM_transposed, trace_reciprocal));
        
         for (int i = 0; i < this->r - 1; i++) {
@@ -309,12 +303,13 @@ class MatrixInverse_newColOpt : public MatrixInverseBase<d>,
             std::cout << "level of Y: " << Y->GetLevel() << std::endl;
             std::cout << "level of A: " << A_bar->GetLevel() << std::endl;
 
-            if ((int)Y->GetLevel() >= this->depth - 2) {
-                A_bar = m_cc->EvalBootstrap(A_bar, 2, 17);
-                Y = m_cc->EvalBootstrap(Y, 2, 18);
-            }
+            // if ((int)Y->GetLevel() >= this->depth - 2) {
+            //     A_bar = m_cc->EvalBootstrap(A_bar, 2, 17);
+            //     Y = m_cc->EvalBootstrap(Y, 2, 18);
+            // }
         }
         Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
+        std::cout << "level of Final Y: " << Y->GetLevel() << std::endl;
         return Y;
     }
 };

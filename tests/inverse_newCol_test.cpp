@@ -26,17 +26,18 @@ protected:
     };
 
     void SetUp() override {
-        int multDepth = 34;
-        uint32_t scaleModSize = 59;
-        uint32_t firstModSize = 60;
-        std::vector<uint32_t> levelBudget = {5, 5};
-        std::vector<uint32_t> bsgsDim = {0, 0};
+        int multDepth = 52;
+        uint32_t scaleModSize = 48;
+        // uint32_t scaleModSize = 59;
+        // uint32_t firstModSize = 60;
+        // std::vector<uint32_t> levelBudget = {5, 5};
+        // std::vector<uint32_t> bsgsDim = {0, 0};
         CCParams<CryptoContextCKKSRNS> parameters;
-        r = 30;
+        r = 22;
         int batchSize = 64*64;
 
         parameters.SetMultiplicativeDepth(multDepth);
-        parameters.SetFirstModSize(firstModSize);
+        // parameters.SetFirstModSize(firstModSize);
         parameters.SetScalingModSize(scaleModSize);
         parameters.SetBatchSize(batchSize);
         parameters.SetSecurityLevel(HEStd_128_classic);
@@ -52,10 +53,10 @@ protected:
         auto keyPair = m_cc->KeyGen();
         m_publicKey = keyPair.publicKey;
         m_privateKey = keyPair.secretKey;
-        m_cc->EvalBootstrapSetup(levelBudget, bsgsDim, batchSize);
+        // m_cc->EvalBootstrapSetup(levelBudget, bsgsDim, batchSize);
         m_cc->EvalRotateKeyGen(m_privateKey, rotations);
         m_cc->EvalMultKeyGen(m_privateKey);
-        m_cc->EvalBootstrapKeyGen(m_privateKey, batchSize);
+        // m_cc->EvalBootstrapKeyGen(m_privateKey, batchSize);
         
         m_enc = std::make_shared<Encryption>(m_cc, m_publicKey);
         matInv = std::make_unique<MatrixInverse_newColOpt<d>>(m_enc, m_cc, m_publicKey);
@@ -196,14 +197,16 @@ TYPED_TEST_P(MatrixInverseNewColTestTyped, InverseTest) {
     
     auto matrix = this->generateRandomMatrix();
     auto enc_matrix = this->m_enc->encryptInput(matrix);
-    auto inv_result = this->matInv->eval_inverse(enc_matrix);
+    std::vector<double> expected_inverse = this->computeInverse(matrix);
+    std::cout << "Using Ring Dimension: " << this->m_cc->GetRingDimension() << std::endl;
+
+    auto inv_result = this->matInv->eval_inverse_debug(enc_matrix, this->m_privateKey);
     
     Plaintext result;
     this->m_cc->Decrypt(this->m_privateKey, inv_result, &result);
     result->SetLength(d * d);
     
     std::vector<double> computed_inverse = result->GetRealPackedValue();
-    std::vector<double> expected_inverse = this->computeInverse(matrix);
     
     auto error_stats = this->analyzeErrors(computed_inverse, expected_inverse);
     this->printErrorStats(error_stats);

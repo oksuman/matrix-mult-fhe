@@ -10,7 +10,7 @@ using namespace lbcrypto;
 template <int d> class MatrixInverseBase {
   protected:
     static constexpr int r = 22;
-    static constexpr int depth = 49; // 2r+9 48
+    static constexpr int depth = 51; // 2r+9 48
 
     virtual std::vector<double> initializeIdentityMatrix() {
         std::vector<double> identity(d*d, 0.0);
@@ -33,25 +33,25 @@ template <int d>
 class MatrixInverse_AS24Opt : public MatrixInverseBase<d>,
                            public MatrixMult_AS24Opt<d> {
   protected:
-    using MatrixOperationBase<d>::rot;
     using MatrixOperationBase<d>::m_cc;
 
   public:
     MatrixInverse_AS24Opt(std::shared_ptr<Encryption> enc,
                        CryptoContext<DCRTPoly> cc,
-                       PublicKey<DCRTPoly> publicKey)
-        : MatrixInverseBase<d>(), MatrixMult_AS24Opt<d>(enc, cc, publicKey) {}
+                       PublicKey<DCRTPoly> publicKey,
+                       std::vector<int> rotations)
+        : MatrixInverseBase<d>(), MatrixMult_AS24Opt<d>(enc, cc, publicKey, rotations) {}
 
     Ciphertext<DCRTPoly> eval_inverse(const Ciphertext<DCRTPoly> &M) override {
         std::vector<double> vI = this->initializeIdentityMatrix();
-        Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI, 1, 0, nullptr, this->max_batch);
+        Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI, 1, 0, nullptr, this->getMaxBatch());
 
         auto M_transposed = this->eval_transpose(M);
 
         auto m_M = M->Clone();
-        m_M->SetSlots(this->max_batch);
+        m_M->SetSlots(this->getMaxBatch());
         m_M = this->clean(m_M);
-        M_transposed->SetSlots(this->max_batch);
+        M_transposed->SetSlots(this->getMaxBatch());
         M_transposed = this->clean(M_transposed);
 
         auto MM_transposed = this->eval_mult(m_M, M_transposed);
@@ -62,8 +62,8 @@ class MatrixInverse_AS24Opt : public MatrixInverseBase<d>,
         auto trace_reciprocal =
             this->m_cc->EvalDivide(trace, 1, (d * d) / 3 + d, 5);
 
-        trace_reciprocal->SetSlots(this->max_batch);
-        MM_transposed->SetSlots(this->max_batch);
+        trace_reciprocal->SetSlots(this->getMaxBatch());
+        MM_transposed->SetSlots(this->getMaxBatch());
         MM_transposed = this->clean(MM_transposed);
 
         Ciphertext<DCRTPoly> A_bar;
@@ -76,7 +76,7 @@ class MatrixInverse_AS24Opt : public MatrixInverseBase<d>,
         std::cout << "level of A: " << A_bar->GetLevel() << std::endl;
 
         for (int i = 0; i < this->r - 1; i++) {
-            auto identity = m_cc->MakeCKKSPackedPlaintext(vI, 1, A_bar->GetLevel(), nullptr, this->max_batch);
+            auto identity = m_cc->MakeCKKSPackedPlaintext(vI, 1, A_bar->GetLevel(), nullptr, this->getMaxBatch());
             auto tmp = this->m_cc->EvalAdd(pI, A_bar);
             Y = this->eval_mult(Y, tmp);
             A_bar = this->eval_mult(A_bar, A_bar);   
@@ -89,12 +89,12 @@ class MatrixInverse_AS24Opt : public MatrixInverseBase<d>,
             {
                 #pragma omp section
                 {
-                    A_bar->SetSlots(this->max_batch);
+                    A_bar->SetSlots(this->getMaxBatch());
                     A_bar = this->clean(A_bar);
                 }
                 #pragma omp section
                 {
-                    Y->SetSlots(this->max_batch);
+                    Y->SetSlots(this->getMaxBatch());
                     Y = this->clean(Y);
                 }
             }
@@ -110,10 +110,10 @@ class MatrixInverse_AS24Opt : public MatrixInverseBase<d>,
         Plaintext debug;
 
         std::vector<double> vI = this->initializeIdentityMatrix();
-        Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI, 1, 0, nullptr, this->max_batch);
+        Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI, 1, 0, nullptr, this->getMaxBatch());
 
         auto m_M = M->Clone();
-        m_M->SetSlots(this->max_batch);
+        m_M->SetSlots(this->getMaxBatch());
         m_M = this->clean(m_M);
         auto M_transposed = this->eval_transpose(m_M);
 
@@ -127,11 +127,8 @@ class MatrixInverse_AS24Opt : public MatrixInverseBase<d>,
         debug->SetLength(10);
         std::cout << "Mt: " << debug << std::endl;
 
-
-
         auto MM_transposed = this->eval_mult(m_M, M_transposed);
         
-
         m_cc->Decrypt(MM_transposed, sk, &debug);
         debug->SetLength(10);
         std::cout << "Level of MMt: " << MM_transposed->GetLevel() << std::endl;
@@ -158,7 +155,7 @@ class MatrixInverse_AS24Opt : public MatrixInverseBase<d>,
         Y =
             this->m_cc->EvalMultAndRelinearize(M_transposed, trace_reciprocal);
         std::cout << "slots of Y: " << Y->GetSlots() << std::endl;
-        MM_transposed->SetSlots(this->max_batch);
+        MM_transposed->SetSlots(this->getMaxBatch());
         MM_transposed = this->clean(MM_transposed);
         A_bar =
             this->m_cc->EvalSub(pI, this->m_cc->EvalMultAndRelinearize(
@@ -184,9 +181,9 @@ class MatrixInverse_AS24Opt : public MatrixInverseBase<d>,
                 A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);   
             } 
 
-            Y->SetSlots(this->max_batch);
+            Y->SetSlots(this->getMaxBatch());
             Y = this->clean(Y);
-            A_bar->SetSlots(this->max_batch);
+            A_bar->SetSlots(this->getMaxBatch());
             A_bar = this->clean(A_bar);
 
             std::cout << "current interation: " << i << std::endl;
@@ -208,16 +205,20 @@ class MatrixInverse_AS24Opt : public MatrixInverseBase<d>,
 template <int d>
 class MatrixInverse_newColOpt : public MatrixInverseBase<d>,
                              public MatrixMult_newColOpt<d> {
+  private:
+    std::vector<int> m_rotations; 
+
   protected:
-    using MatrixOperationBase<d>::rot;
     using MatrixOperationBase<d>::m_cc;
     using MatrixOperationBase<d>::vectorRotate;
 
   public:
     MatrixInverse_newColOpt(std::shared_ptr<Encryption> enc,
                          CryptoContext<DCRTPoly> cc,
-                         PublicKey<DCRTPoly> publicKey)
-        : MatrixInverseBase<d>(), MatrixMult_newColOpt<d>(enc, cc, publicKey) {}
+                         PublicKey<DCRTPoly> publicKey,
+                         std::vector<int> rotations)
+        : MatrixInverseBase<d>(), MatrixMult_newColOpt<d>(enc, cc, publicKey, rotations),
+          m_rotations(rotations) {}
 
     Ciphertext<DCRTPoly> eval_inverse(const Ciphertext<DCRTPoly> &M) override {
         omp_set_max_active_levels(2);
@@ -248,12 +249,7 @@ class MatrixInverse_newColOpt : public MatrixInverseBase<d>,
             auto identity = m_cc->MakeCKKSPackedPlaintext(vI, 1, A_bar->GetLevel(), nullptr, d*d);
             auto A_plus_I = this->m_cc->EvalAdd(identity, A_bar);
             Y = this->eval_mult(Y, A_plus_I);
-            A_bar = this->eval_mult(A_bar, A_bar);   
-
-            // if ((int)Y->GetLevel() >= this->depth - 2) {
-            //     A_bar = m_cc->EvalBootstrap(A_bar, 2, 17);
-            //     Y = m_cc->EvalBootstrap(Y, 2, 18);
-            // }
+            A_bar = this->eval_mult(A_bar, A_bar);  
         }
         Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
         return Y;
@@ -313,4 +309,3 @@ class MatrixInverse_newColOpt : public MatrixInverseBase<d>,
         return Y;
     }
 };
-

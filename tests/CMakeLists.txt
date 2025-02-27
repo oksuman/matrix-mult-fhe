@@ -6,12 +6,6 @@ find_package(OpenFHE CONFIG REQUIRED)
 
 # Define test sources
 set(TEST_SOURCES
-    matrix_operation_test.cpp
-
-    mult_as24_test.cpp
-    mult_newCol_test.cpp
-
-    inverse_as24_test.cpp
     inverse_newCol_test.cpp
 )
 

@@ -26,18 +26,13 @@ protected:
     };
 
     void SetUp() override {
-        int multDepth = 52;
-        uint32_t scaleModSize = 48;
-        // uint32_t scaleModSize = 59;
-        // uint32_t firstModSize = 60;
-        // std::vector<uint32_t> levelBudget = {5, 5};
-        // std::vector<uint32_t> bsgsDim = {0, 0};
+        int multDepth = 51;
+        uint32_t scaleModSize = 45;
         CCParams<CryptoContextCKKSRNS> parameters;
         r = 22;
         int batchSize = 64*64;
 
         parameters.SetMultiplicativeDepth(multDepth);
-        // parameters.SetFirstModSize(firstModSize);
         parameters.SetScalingModSize(scaleModSize);
         parameters.SetBatchSize(batchSize);
         parameters.SetSecurityLevel(HEStd_128_classic);
@@ -49,17 +44,17 @@ protected:
         m_cc->Enable(ADVANCEDSHE);
         m_cc->Enable(FHE);
 
-        std::vector<int> rotations = {-4032, -3528, -3024, -2520, -2016, -1512, -1008, -504, -64, -32, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 63, 64, 126, 128, 189, 192, 252, 256, 315, 320, 378, 384, 441, 448, 504, 512, 1008, 1024, 1512, 1536, 2016, 2048, 2520, 2560, 3024, 3072, 3528, 3584, 4096, 8192, 16384, 32768};
+        // std::vector<int> rotations = {-4032, -3528, -3024, -2520, -2016, -1512, -1008, -504, -64, -32, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 63, 64, 126, 128, 189, 192, 252, 256, 315, 320, 378, 384, 441, 448, 504, 512, 1008, 1024, 1512, 1536, 2016, 2048, 2520, 2560, 3024, 3072, 3528, 3584, 4096, 8192, 16384, 32768};
+        std::vector<int> rotations = {-4032, -3528, -3024, -2520, -2016, -1512, -1008, -504, -64, -32, 1, 2, 4, 7, 8, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 63, 64, 126, 128, 189, 192, 252, 256, 315, 320, 378, 384, 441, 448, 504, 512, 1008, 1024, 1512, 1536, 2016, 2048, 2520, 2560, 3024, 3072, 3528, 3584, 4096, 8192, 16384, 32768};
+        // std::vector<int> rotations = {-4032, -3528, -3024, -2520, -2016, -1512, -1008, -504, -64, -32, 0, 1, 2, 4, 7, 8, 11, 13, 14, 15, 16, 19, 21, 22, 23, 25, 26, 27, 28, 29, 30, 31, 32, 63, 64, 126, 128, 189, 252, 256, 315, 378, 441, 448, 504, 512, 1008, 1024, 1512, 2016, 2048, 2520, 3024, 3528, 3584, 4096, 8192, 16384, 32768};
         auto keyPair = m_cc->KeyGen();
         m_publicKey = keyPair.publicKey;
         m_privateKey = keyPair.secretKey;
-        // m_cc->EvalBootstrapSetup(levelBudget, bsgsDim, batchSize);
         m_cc->EvalRotateKeyGen(m_privateKey, rotations);
         m_cc->EvalMultKeyGen(m_privateKey);
-        // m_cc->EvalBootstrapKeyGen(m_privateKey, batchSize);
         
         m_enc = std::make_shared<Encryption>(m_cc, m_publicKey);
-        matInv = std::make_unique<MatrixInverse_newColOpt<d>>(m_enc, m_cc, m_publicKey);
+        matInv = std::make_unique<MatrixInverse_newColOpt<d>>(m_enc, m_cc, m_publicKey, rotations);
     }
 
     std::vector<double> generateRandomMatrix() {
@@ -132,6 +127,28 @@ protected:
         return result;
     }
 
+    std::vector<double> multiplyMatrices(const std::vector<double>& A, const std::vector<double>& B) {
+        std::vector<double> result(d * d, 0.0);
+        
+        for (int i = 0; i < d; i++) {
+            for (int j = 0; j < d; j++) {
+                for (int k = 0; k < d; k++) {
+                    result[i * d + j] += A[i * d + k] * B[k * d + j];
+                }
+            }
+        }
+        
+        return result;
+    }
+
+    std::vector<double> generateIdentityMatrix() {
+        std::vector<double> identity(d * d, 0.0);
+        for (int i = 0; i < d; i++) {
+            identity[i * d + i] = 1.0;
+        }
+        return identity;
+    }
+
     ErrorStats analyzeErrors(const std::vector<double>& computed, 
                            const std::vector<double>& expected) {
         std::vector<std::tuple<int, int, double, double, double>> all_errors;
@@ -152,7 +169,6 @@ protected:
 
         stats.avg_error = sum_error / (d * d);
 
-        // Sort errors in descending order and get top 5
         std::sort(all_errors.begin(), all_errors.end(),
                  [](const auto& a, const auto& b) { return std::get<2>(a) > std::get<2>(b); });
 
@@ -162,9 +178,9 @@ protected:
         return stats;
     }
 
-    void printErrorStats(const ErrorStats& stats) {
+    void printErrorStats(const ErrorStats& stats, const std::string& description) {
         std::cout << std::scientific << std::setprecision(6);
-        std::cout << "Error Statistics:\n";
+        std::cout << description << " Error Statistics:\n";
         std::cout << "Maximum Error: " << stats.max_error << "\n";
         std::cout << "Minimum Error: " << stats.min_error << "\n";
         std::cout << "Average Error: " << stats.avg_error << "\n\n";
@@ -200,8 +216,7 @@ TYPED_TEST_P(MatrixInverseNewColTestTyped, InverseTest) {
     std::vector<double> expected_inverse = this->computeInverse(matrix);
     std::cout << "Using Ring Dimension: " << this->m_cc->GetRingDimension() << std::endl;
 
-    auto inv_result = this->matInv->eval_inverse_debug(enc_matrix, this->m_privateKey);
-    
+    auto inv_result = this->matInv->eval_inverse(enc_matrix);
     Plaintext result;
     this->m_cc->Decrypt(this->m_privateKey, inv_result, &result);
     result->SetLength(d * d);
@@ -209,9 +224,17 @@ TYPED_TEST_P(MatrixInverseNewColTestTyped, InverseTest) {
     std::vector<double> computed_inverse = result->GetRealPackedValue();
     
     auto error_stats = this->analyzeErrors(computed_inverse, expected_inverse);
-    this->printErrorStats(error_stats);
+    this->printErrorStats(error_stats, "Inverse Matrix");
     
     EXPECT_LE(error_stats.max_error, 0.0001) << "Matrix inverse error exceeds threshold";
+    
+    // 추가 검증: A * A^(-1) = I 확인
+    auto identity = this->generateIdentityMatrix();
+    auto product = this->multiplyMatrices(matrix, computed_inverse);
+    auto product_error_stats = this->analyzeErrors(product, identity);
+    this->printErrorStats(product_error_stats, "A * A^(-1) = I");
+    
+    EXPECT_LE(product_error_stats.max_error, 0.0001) << "Matrix multiplication error exceeds threshold";
 }
 
 REGISTER_TYPED_TEST_SUITE_P(MatrixInverseNewColTestTyped, InverseTest);

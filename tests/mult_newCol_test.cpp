@@ -17,6 +17,7 @@ template <int d> class MatrixMultNewColTest : public ::testing::Test {
         parameters.SetScalingModSize(50);
 
         // For single matrix multiplication
+        parameters.SetRingDim(1<<17);
         parameters.SetBatchSize(d * d);
         parameters.SetSecurityLevel(HEStd_128_classic);
 
@@ -77,14 +78,11 @@ template <int d> class MatrixMultNewColTest : public ::testing::Test {
     std::unique_ptr<MatrixMult_newCol<d>> matMult;
 };
 
-// Define the test fixture
 template <typename T>
 class MatrixMultNewColTestFixture : public MatrixMultNewColTest<T::value> {};
 
-// Register the test suite
 TYPED_TEST_SUITE_P(MatrixMultNewColTestFixture);
 
-// Define the test cases
 TYPED_TEST_P(MatrixMultNewColTestFixture, IdentityMultiplicationTest) {
     constexpr size_t d = TypeParam::value;
 
@@ -164,9 +162,10 @@ REGISTER_TYPED_TEST_SUITE_P(MatrixMultNewColTestFixture,
 using TestSizes = ::testing::Types<
     std::integral_constant<size_t, 4>, std::integral_constant<size_t, 8>,
     std::integral_constant<size_t, 16>, std::integral_constant<size_t, 32>,
-    std::integral_constant<size_t, 64>>;
+    std::integral_constant<size_t, 64>
+    >;
 
 // Instantiate the test suite
-INSTANTIATE_TYPED_TEST_SUITE_P(MatrixMultTests,             // Instance name
-                               MatrixMultNewColTestFixture, // Fixture name
+INSTANTIATE_TYPED_TEST_SUITE_P(MatrixMultTests,             
+                               MatrixMultNewColTestFixture, 
                                TestSizes);

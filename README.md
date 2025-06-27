@@ -125,5 +125,5 @@ Xiaoqian Jiang, Miran Kim, Kristin E. Lauter, and Yongsoo Song. "Secure Outsourc
 ### RT22
 Panagiotis Rizomiliotis and Aikaterini Triakosia. "On Matrix Multiplication with Homomorphic Encryption." In *Proceedings of the 2022 on Cloud Computing Security Workshop (CCSW 2022)*, pages 53-61, 2022. [https://dl.acm.org/doi/10.1145/3560810.3564267]
 
-### AS24
-Aikata Aikata and Sujoy Sinha Roy. "Secure and Efficient Outsourced Matrix Multiplication with Homomorphic Encryption." To appear in the proceedings of INDOCRYPT 2024, 2024. [https://eprint.iacr.org/2024/1730.pdf]
+### AR24
+Aikata Aikata and Sujoy Sinha Roy. "Secure and Efficient Outsourced Matrix Multiplication with Homomorphic Encryption." Progress in Cryptology - (INDOCRYPT)* 2024- 25th International Conference Part I, 2024. [https://eprint.iacr.org/2024/1730.pdf]

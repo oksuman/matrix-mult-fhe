@@ -47,7 +47,7 @@ class MatrixOperationBase {
         if (vec.empty())
             return std::vector<double>();
 
-        std::vector<double> result = vec; // 원본 벡터를 복사
+        std::vector<double> result = vec;
         int n = result.size();
 
         if (rotateIndex > 0) // left rotation

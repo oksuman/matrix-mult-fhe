@@ -8,8 +8,22 @@
 #include "matrix_algo_multiPack.h"
 #include "diagonal_packing.h" 
 
+// header files needed for serialization
+#include "ciphertext-ser.h"
+#include "cryptocontext-ser.h"
+#include "key/key-ser.h"
+#include "scheme/ckksrns/ckksrns-ser.h"
+#include <filesystem>
+
 constexpr int SQUARING_ITERATIONS = 15;
 constexpr int Scaling = 50;
+
+size_t GetSerializedSize(const Ciphertext<DCRTPoly>& ct, const std::string& tmpFile) {
+    Serial::SerializeToFile(tmpFile, ct, SerType::BINARY);
+    size_t size = std::filesystem::file_size(tmpFile);
+    std::filesystem::remove(tmpFile);
+    return size;
+}
 
 template <int d>
 auto setupSquaringJKLS18() {
@@ -45,9 +59,11 @@ auto setupSquaringJKLS18() {
     for (int i = 0; i < d * d; i++) {
         matrix[i] = dis(gen);
     }
-
     auto enc_matrix = enc->encryptInput(matrix);
     std::cout << "Ring Dimension: " << cc->GetRingDimension() << std::endl;
+    size_t serSize = GetSerializedSize(enc_matrix, "tmp_ct_jkls18.bin");
+    std::cout << "[JKLS18] Serialized ciphertext size: " << serSize / 1024.0 << " KB" << std::endl;
+
     return std::make_tuple(std::move(cc), std::move(algo), std::move(enc_matrix));
 }
 
@@ -92,13 +108,15 @@ auto setupSquaringRT22() -> SquaringSetupOutputRT22<d> {
     std::mt19937 gen(rd());
     std::uniform_real_distribution<double> dis(-1.0, 1.0);
 
+    std::cout << "Ring Dimension: " << cc->GetRingDimension() << std::endl;
     if (d == 32) {
-        // Regular 32x32 matrix
         std::vector<double> matrix(d * d);
         for (auto& elem : matrix) elem = dis(gen);
         output.enc_matrix = enc->encryptInput(matrix);
 
-        // 64x64 matrix split into 32x32 blocks for Strassen
+        size_t serSize = GetSerializedSize(output.enc_matrix, "tmp_ct_rt22_matrix.bin");
+        std::cout << "[RT22 32x32] Serialized ciphertext size: " << serSize / 1024.0 << " KB" << std::endl;
+
         std::vector<double> largeMatrix(4 * d * d);
         for (auto& elem : largeMatrix) elem = dis(gen);
 
@@ -113,15 +131,21 @@ auto setupSquaringRT22() -> SquaringSetupOutputRT22<d> {
             }
         }
 
-        for (const auto& block : split) {
-            output.enc_split.push_back(enc->encryptInput(block));
+        for (size_t i = 0; i < 4; ++i) {
+            auto ct = enc->encryptInput(split[i]);
+            output.enc_split.push_back(ct);
+            size_t splitSize = GetSerializedSize(ct, "tmp_ct_rt22_split" + std::to_string(i) + ".bin");
+            std::cout << "[RT22 64x64 Split Block " << i << "] Serialized size: " << splitSize / 1024.0 << " KB" << std::endl;
         }
+
     } else {
         std::vector<double> matrix(d * d);
         for (auto& elem : matrix) elem = dis(gen);
         output.enc_matrix = enc->encryptInput(matrix);
+
+        size_t serSize = GetSerializedSize(output.enc_matrix, "tmp_ct_rt22_matrix.bin");
+        std::cout << "[RT22] Serialized ciphertext size: " << serSize / 1024.0 << " KB" << std::endl;
     }
-    std::cout << "Ring Dimension: " << cc->GetRingDimension() << std::endl;
     return output;
 }
 
@@ -164,7 +188,11 @@ auto setupSquaringAS24() {
     }
 
     auto enc_matrix = enc->encryptInput(matrix);
+
     std::cout << "Ring Dimension: " << cc->GetRingDimension() << std::endl;
+    size_t serSize = GetSerializedSize(enc_matrix, "tmp_ct_as24.bin");
+    std::cout << "[AS24] Serialized ciphertext size: " << serSize / 1024.0 << " KB" << std::endl;
+
     return std::make_tuple(std::move(cc), std::move(algo), std::move(enc_matrix));
 }
 
@@ -208,7 +236,11 @@ auto setupSquaringNewCol() {
     }
 
     auto enc_matrix = enc->encryptInput(matrix);
+
     std::cout << "Ring Dimension: " << cc->GetRingDimension() << std::endl;
+    size_t serSize = GetSerializedSize(enc_matrix, "tmp_ct_newcol.bin");
+    std::cout << "[NewCol] Serialized ciphertext size: " << serSize / 1024.0 << " KB" << std::endl;
+
     return std::make_tuple(std::move(cc), std::move(algo), std::move(enc_matrix));
 }
 

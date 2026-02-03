@@ -12,7 +12,22 @@
 #include "matrix_algo_multiPack.h"
 #include "diagonal_packing.h"
 
+// header files needed for serialization
+#include "ciphertext-ser.h"
+#include "cryptocontext-ser.h"
+#include "key/key-ser.h"
+#include "scheme/ckksrns/ckksrns-ser.h"
+#include <filesystem>
+
 using namespace lbcrypto;
+
+
+size_t GetSerializedSize(const Ciphertext<DCRTPoly>& ct, const std::string& tmpFile) {
+    Serial::SerializeToFile(tmpFile, ct, SerType::BINARY);
+    size_t size = std::filesystem::file_size(tmpFile);
+    std::filesystem::remove(tmpFile);
+    return size;
+}
 
 template <int d>
 auto setupJKLS18() {

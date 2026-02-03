@@ -28,12 +28,12 @@ run_benchmark() {
 }
 
 ALGORITHMS=(
-    "benchmark_newcol" 
-    "benchmark_newrow" 
-    "benchmark_as24" 
-    "benchmark_jkls18" 
-    "benchmark_rt22" 
     "benchmark_diag"
+    # "benchmark_newcol" 
+    # "benchmark_newrow" 
+    # "benchmark_as24" 
+    # "benchmark_jkls18" 
+    # "benchmark_rt22" 
 )
 
 # Initialize result file with header

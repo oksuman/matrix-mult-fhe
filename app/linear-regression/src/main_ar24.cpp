@@ -1,5 +1,5 @@
-// main_as24.cpp
-#include "lr_as24.h"
+// main_ar24.cpp
+#include "lr_ar24.h"
 #include <iostream>
 #include <fstream>
 #include "encryption.h"
@@ -46,7 +46,7 @@ int main() {
     auto enc = std::make_shared<Encryption>(cc, keyPair.publicKey);
 
     // Create LinearRegression instance
-    LinearRegression_AS24 lr(enc, cc, keyPair, rotations, multDepth);
+    LinearRegression_AR24 lr(enc, cc, keyPair, rotations, multDepth);
 
     // Process training data
     std::vector<double> features;
@@ -59,7 +59,7 @@ int main() {
     auto y = cc->Encrypt(keyPair.publicKey, cc->MakeCKKSPackedPlaintext(outcomes,  1, 0, nullptr, SAMPLE_DIM * SAMPLE_DIM));
 
     // Open files for results
-    std::ofstream timingFile("as24_timing.txt");
+    std::ofstream timingFile("ar24_timing.txt");
     
     // Train and measure time
     auto [step1_time, step2_time, step3_time, step4_time] = 
@@ -76,7 +76,7 @@ int main() {
     timingFile.close();
 
     // Calculate and record MSE
-    double mse = lr.inferenceAndCalculateMSE("data/testSet.csv", "as24_mse_result.txt");
+    double mse = lr.inferenceAndCalculateMSE("data/testSet.csv", "ar24_mse_result.txt");
     std::cout << "mse: " << mse << std::endl;
     return 0;
 }

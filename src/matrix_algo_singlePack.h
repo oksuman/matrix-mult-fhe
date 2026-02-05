@@ -433,7 +433,7 @@ template <int d> class MatrixMult_RT22 : public MatrixOperationBase<d> {
 
 // Secure and Efficient Outsourced Matrix Multiplication with Homomorphic
 // Encryption, Indocrypt 2024
-template <int d> class MatrixMult_AS24 : public MatrixOperationBase<d> {
+template <int d> class MatrixMult_AR24 : public MatrixOperationBase<d> {
   private:
     int max_batch;
     int B;
@@ -444,7 +444,7 @@ template <int d> class MatrixMult_AS24 : public MatrixOperationBase<d> {
     int s;
 
   public:
-    MatrixMult_AS24(std::shared_ptr<Encryption> enc, CryptoContext<DCRTPoly> cc,
+    MatrixMult_AR24(std::shared_ptr<Encryption> enc, CryptoContext<DCRTPoly> cc,
                     PublicKey<DCRTPoly> publicKey, std::vector<int> rotIndices)
         : MatrixOperationBase<d>(enc, cc, publicKey,
                                  rotIndices) // Parent initialization

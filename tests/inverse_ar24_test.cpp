@@ -13,7 +13,7 @@
 
 using namespace lbcrypto;
 
-template <int d> class MatrixInverseAS24TestFixture : public ::testing::Test {
+template <int d> class MatrixInverseAR24TestFixture : public ::testing::Test {
   protected:
     void SetUp() override {
         int multDepth;
@@ -108,7 +108,7 @@ template <int d> class MatrixInverseAS24TestFixture : public ::testing::Test {
         m_cc->EvalMultKeyGen(m_privateKey);
 
         m_enc = std::make_shared<Encryption>(m_cc, m_publicKey);
-        matInv = std::make_unique<MatrixInverse_AS24<d>>(
+        matInv = std::make_unique<MatrixInverse_AR24<d>>(
             m_enc, m_cc, m_publicKey, rotations, r, multDepth);
     }
 
@@ -272,19 +272,19 @@ template <int d> class MatrixInverseAS24TestFixture : public ::testing::Test {
     PublicKey<DCRTPoly> m_publicKey;
     PrivateKey<DCRTPoly> m_privateKey;
     std::shared_ptr<Encryption> m_enc;
-    std::unique_ptr<MatrixInverse_AS24<d>> matInv;
+    std::unique_ptr<MatrixInverse_AR24<d>> matInv;
     int r;
 };
 
 template <typename T>
-class MatrixInverseAS24TestTyped
-    : public MatrixInverseAS24TestFixture<T::value> {};
+class MatrixInverseAR24TestTyped
+    : public MatrixInverseAR24TestFixture<T::value> {};
 
-TYPED_TEST_SUITE_P(MatrixInverseAS24TestTyped);
+TYPED_TEST_SUITE_P(MatrixInverseAR24TestTyped);
 
-TYPED_TEST_P(MatrixInverseAS24TestTyped, ComprehensiveInverseTest) {
+TYPED_TEST_P(MatrixInverseAR24TestTyped, ComprehensiveInverseTest) {
     constexpr int d = TypeParam::value;
-    std::cout << "\n=== Testing AS24 " << d << "x" << d
+    std::cout << "\n=== Testing AR24 " << d << "x" << d
               << " Matrix Inverse ===" << std::endl;
 
     auto matrix = this->generateRandomMatrix();
@@ -320,11 +320,11 @@ TYPED_TEST_P(MatrixInverseAS24TestTyped, ComprehensiveInverseTest) {
     EXPECT_LE(metrics.max_error, 0.01);
     EXPECT_LT(metrics.avg_log_precision, -5.0);
 
-    std::cout << "All tests completed for AS24 " << d << "x" << d << " matrix\n"
+    std::cout << "All tests completed for AR24 " << d << "x" << d << " matrix\n"
               << std::endl;
 }
 
-REGISTER_TYPED_TEST_SUITE_P(MatrixInverseAS24TestTyped,
+REGISTER_TYPED_TEST_SUITE_P(MatrixInverseAR24TestTyped,
                             ComprehensiveInverseTest);
 
 // using InverseTestSizes = ::testing::Types<std::integral_constant<size_t, 4>,
@@ -335,5 +335,5 @@ REGISTER_TYPED_TEST_SUITE_P(MatrixInverseAS24TestTyped,
 //                                           64>>;
 using InverseTestSizes = ::testing::Types<std::integral_constant<size_t, 64>>;
 
-INSTANTIATE_TYPED_TEST_SUITE_P(MatrixInverseAS24, MatrixInverseAS24TestTyped,
+INSTANTIATE_TYPED_TEST_SUITE_P(MatrixInverseAR24, MatrixInverseAR24TestTyped,
                                InverseTestSizes);

@@ -10,7 +10,7 @@ Benchmarks for single matrix multiplication operations, comparing different algo
 - RT22 (CCSW'22)
   - Regular multiplication for matrices up to 16x16
   - Strassen algorithm for 32x32 matrices using 16x16 blocks
-- AS24 (Indocrypt'24)
+- AR24 (Indocrypt'24)
 - NewCol
 - NewRow
 - DP (Diagonal Packing Method)
@@ -21,7 +21,7 @@ Benchmarks for repeated matrix squaring operations (A -> A^2 -> A^4 -> A^8 -> ..
 - RT22 (CCSW'22)
   - Regular multiplication for matrices up to 32x32
   - Strassen algorithm for 64x64 matrices using 32x32 blocks
-- AS24 (Indocrypt'24)
+- AR24 (Indocrypt'24)
 - NewCol
 - NewRow
 - DP (Diagonal Packing Method)
@@ -35,7 +35,7 @@ Benchmarks for matrix inversion algorithms.
 - RT22 (CCSW'22)
   - Regular multiplication for matrices up to 32x32
   - Strassen algorithm for 64x64 matrices using 32x32 blocks
-- AS24 (Indocrypt'24)
+- AR24 (Indocrypt'24)
 - NewCol
 - NewRow
 - DP (Diagonal Packing Method)

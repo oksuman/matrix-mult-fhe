@@ -1,7 +1,7 @@
 set(INVERSION_BENCHMARK_TARGETS
     benchmark_inversion_jkls18
     benchmark_inversion_rt22
-    benchmark_inversion_as24
+    benchmark_inversion_ar24
     benchmark_inversion_newcol
     benchmark_inversion_newrow
     benchmark_inversion_diag

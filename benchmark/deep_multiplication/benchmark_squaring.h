@@ -150,7 +150,7 @@ auto setupSquaringRT22() -> SquaringSetupOutputRT22<d> {
 }
 
 template <int d>
-auto setupSquaringAS24() {
+auto setupSquaringAR24() {
     CCParams<CryptoContextCKKSRNS> parameters;
     parameters.SetMultiplicativeDepth(SQUARING_ITERATIONS*3);  
     parameters.SetScalingModSize(Scaling);
@@ -177,7 +177,7 @@ auto setupSquaringAS24() {
     cc->EvalMultKeyGen(keyPair.secretKey);
 
     auto enc = std::make_shared<Encryption>(cc, keyPair.publicKey);
-    auto algo = std::make_unique<MatrixMult_AS24<d>>(enc, cc, keyPair.publicKey, rotations);
+    auto algo = std::make_unique<MatrixMult_AR24<d>>(enc, cc, keyPair.publicKey, rotations);
 
     std::vector<double> matrix(d * d);
     std::random_device rd;
@@ -190,8 +190,8 @@ auto setupSquaringAS24() {
     auto enc_matrix = enc->encryptInput(matrix);
 
     std::cout << "Ring Dimension: " << cc->GetRingDimension() << std::endl;
-    size_t serSize = GetSerializedSize(enc_matrix, "tmp_ct_as24.bin");
-    std::cout << "[AS24] Serialized ciphertext size: " << serSize / 1024.0 << " KB" << std::endl;
+    size_t serSize = GetSerializedSize(enc_matrix, "tmp_ct_ar24.bin");
+    std::cout << "[AR24] Serialized ciphertext size: " << serSize / 1024.0 << " KB" << std::endl;
 
     return std::make_tuple(std::move(cc), std::move(algo), std::move(enc_matrix));
 }
@@ -455,8 +455,8 @@ static void BM_RT22_Squaring(benchmark::State& state) {
 }
 
 template <int d>
-static void BM_AS24_Squaring(benchmark::State& state) {
-    auto [cc, algo, enc_matrix] = setupSquaringAS24<d>();
+static void BM_AR24_Squaring(benchmark::State& state) {
+    auto [cc, algo, enc_matrix] = setupSquaringAR24<d>();
     std::vector<double> iteration_times;
     
     for (auto _ : state) {

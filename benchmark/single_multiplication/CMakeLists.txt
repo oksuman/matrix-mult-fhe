@@ -1,7 +1,7 @@
 set(BENCHMARK_TARGETS
     benchmark_jkls18
     benchmark_rt22
-    benchmark_as24
+    benchmark_ar24
     benchmark_newcol
     benchmark_newrow
     benchmark_diag

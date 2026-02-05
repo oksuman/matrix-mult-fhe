@@ -31,7 +31,7 @@ ALGORITHMS=(
     "benchmark_diag"
     # "benchmark_newcol" 
     # "benchmark_newrow" 
-    # "benchmark_as24" 
+    # "benchmark_ar24" 
     # "benchmark_jkls18" 
     # "benchmark_rt22" 
 )

@@ -130,19 +130,19 @@ class MatrixInverse_RT22 : public MatrixInverseBase<d>,
 };
 
 template <int d>
-class MatrixInverse_AS24 : public MatrixInverseBase<d>,
-                           public MatrixMult_AS24<d> {
+class MatrixInverse_AR24 : public MatrixInverseBase<d>,
+                           public MatrixMult_AR24<d> {
   protected:
     using MatrixOperationBase<d>::rot;
     using MatrixOperationBase<d>::m_cc;
 
   public:
-    MatrixInverse_AS24(std::shared_ptr<Encryption> enc,
+    MatrixInverse_AR24(std::shared_ptr<Encryption> enc,
                        CryptoContext<DCRTPoly> cc,
                        PublicKey<DCRTPoly> publicKey,
                        std::vector<int> rotIndices, int iterations,
                        int multDepth)
-        : MatrixInverseBase<d>(iterations, multDepth), MatrixMult_AS24<d>(
+        : MatrixInverseBase<d>(iterations, multDepth), MatrixMult_AR24<d>(
                                                            enc, cc, publicKey,
                                                            rotIndices) {}
 

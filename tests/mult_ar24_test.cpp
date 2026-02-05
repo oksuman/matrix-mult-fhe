@@ -9,7 +9,7 @@
 
 using namespace lbcrypto;
 
-template <int d> class MatrixMultAS24Test : public ::testing::Test {
+template <int d> class MatrixMultAR24Test : public ::testing::Test {
   protected:
     void SetUp() override {
         CCParams<CryptoContextCKKSRNS> parameters;
@@ -42,7 +42,7 @@ template <int d> class MatrixMultAS24Test : public ::testing::Test {
         m_cc->EvalMultKeyGen(m_privateKey);
 
         m_enc = std::make_shared<Encryption>(m_cc, m_publicKey);
-        matMult = std::make_unique<MatrixMult_AS24<d>>(m_enc, m_cc, m_publicKey,
+        matMult = std::make_unique<MatrixMult_AR24<d>>(m_enc, m_cc, m_publicKey,
                                                        rotations);
     }
 
@@ -89,15 +89,15 @@ template <int d> class MatrixMultAS24Test : public ::testing::Test {
     PublicKey<DCRTPoly> m_publicKey;
     PrivateKey<DCRTPoly> m_privateKey;
     std::shared_ptr<Encryption> m_enc;
-    std::unique_ptr<MatrixMult_AS24<d>> matMult;
+    std::unique_ptr<MatrixMult_AR24<d>> matMult;
 };
 
 template <typename T>
-class MatrixMultAS24TestFixture : public MatrixMultAS24Test<T::value> {};
+class MatrixMultAR24TestFixture : public MatrixMultAR24Test<T::value> {};
 
-TYPED_TEST_SUITE_P(MatrixMultAS24TestFixture);
+TYPED_TEST_SUITE_P(MatrixMultAR24TestFixture);
 
-TYPED_TEST_P(MatrixMultAS24TestFixture, MultiplicationTest) {
+TYPED_TEST_P(MatrixMultAR24TestFixture, MultiplicationTest) {
     constexpr int d = TypeParam::value;
 
     auto matrixA = this->generateRandomMatrix();
@@ -136,12 +136,12 @@ TYPED_TEST_P(MatrixMultAS24TestFixture, MultiplicationTest) {
     }
 }
 
-REGISTER_TYPED_TEST_SUITE_P(MatrixMultAS24TestFixture, MultiplicationTest);
+REGISTER_TYPED_TEST_SUITE_P(MatrixMultAR24TestFixture, MultiplicationTest);
 
 using TestSizes = ::testing::Types<
     std::integral_constant<int, 4>, std::integral_constant<int, 8>,
     std::integral_constant<int, 16>, std::integral_constant<int, 32>,
     std::integral_constant<int, 64>>;
 
-INSTANTIATE_TYPED_TEST_SUITE_P(MatrixMultAS24, MatrixMultAS24TestFixture,
+INSTANTIATE_TYPED_TEST_SUITE_P(MatrixMultAR24, MatrixMultAR24TestFixture,
                                TestSizes);

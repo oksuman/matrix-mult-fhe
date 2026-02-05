@@ -2,8 +2,8 @@ add_executable(lr_newcol
     src/main_newcol.cpp
 )
 
-add_executable(lr_as24
-     src/main_as24.cpp
+add_executable(lr_ar24
+     src/main_ar24.cpp
 )
 
 target_include_directories(lr_newcol
@@ -25,7 +25,7 @@ target_link_libraries(lr_newcol
     utils
 )
 
-target_include_directories(lr_as24
+target_include_directories(lr_ar24
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/src
@@ -36,7 +36,7 @@ target_include_directories(lr_as24
     ${OpenFHE_INCLUDE}/third-party/include
 )
 
-target_link_libraries(lr_as24
+target_link_libraries(lr_ar24
     PRIVATE
     matrix_operations
     OPENFHEcore

@@ -78,7 +78,9 @@ public:
                    const std::vector<Plaintext>& B) {
         std::vector<Ciphertext<DCRTPoly>> C(d * d);
         for(int i = 0; i < d * d; i++) {
-            C[i] = m_cc->EvalAdd(A[i], B[i]);
+            // Copy plaintext to avoid const reference issue with OpenFHE's EvalAdd
+            Plaintext ptx = B[i];
+            C[i] = m_cc->EvalAdd(A[i], ptx);
         }
         return C;
     }

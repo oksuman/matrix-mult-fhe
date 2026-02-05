@@ -61,3 +61,7 @@ Thumbs.db
 
 # macOS debug symbols
 *.dSYM/
+
+# Claude Code
+CLAUDE.md
+.claude/

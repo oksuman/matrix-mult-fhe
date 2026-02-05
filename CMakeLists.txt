@@ -80,5 +80,6 @@ target_include_directories(matrix_operations
 # Add project subdirectories
 add_subdirectory(tests)
 add_subdirectory(benchmark)
-add_subdirectory(app/linear_regression)
+add_subdirectory(app/linear-regression)
+add_subdirectory(app/linear-discriminant-analysis)
 add_subdirectory(utils)

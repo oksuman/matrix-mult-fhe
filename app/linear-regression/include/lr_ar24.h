@@ -1,9 +1,9 @@
-// lr_as24.h
+// lr_ar24.h
 #pragma once
 
 #include "lr_base.h"
 
-class LinearRegression_AS24 : public LinearRegressionBase {
+class LinearRegression_AR24 : public LinearRegressionBase {
 private:
     const int m_maxBatch;
     const int m_multDepth;
@@ -147,7 +147,7 @@ private:
     }
 
 public:
-    LinearRegression_AS24(std::shared_ptr<Encryption> enc,
+    LinearRegression_AR24(std::shared_ptr<Encryption> enc,
                          CryptoContext<DCRTPoly> cc,
                          KeyPair<DCRTPoly> keyPair,
                          std::vector<int> rotIndices,

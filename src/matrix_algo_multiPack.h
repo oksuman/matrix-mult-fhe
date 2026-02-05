@@ -59,7 +59,9 @@ template <int d> class MatrixInv_diag : public MatrixMultiPackBase<d> {
         std::vector<Ciphertext<DCRTPoly>> matrixC;
 
         for (int i = 0; i < d; i++) {
-            auto diag = this->m_cc->EvalAdd(matrixA[i], matrixB[i]);
+            // Copy plaintext to avoid const reference issue with OpenFHE's EvalAdd
+            Plaintext ptx = matrixB[i];
+            auto diag = this->m_cc->EvalAdd(matrixA[i], ptx);
             matrixC.push_back(diag);
         }
 

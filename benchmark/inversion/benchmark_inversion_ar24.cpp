@@ -5,7 +5,7 @@
 const int ITERATION_COUNT = 1;
 
 template <int d>
-static void BM_AS24_Inversion(benchmark::State& state) {
+static void BM_AR24_Inversion(benchmark::State& state) {
     int multDepth;
     uint32_t scaleModSize;
     uint32_t firstModSize;
@@ -94,7 +94,7 @@ static void BM_AS24_Inversion(benchmark::State& state) {
     cc->EvalMultKeyGen(keyPair.secretKey);
 
     auto enc = std::make_shared<Encryption>(cc, keyPair.publicKey);
-    auto matInv = std::make_unique<MatrixInverse_AS24<d>>(
+    auto matInv = std::make_unique<MatrixInverse_AR24<d>>(
         enc, cc, keyPair.publicKey, rotations, r, multDepth);
 
     std::vector<double> matrix(d * d);
@@ -124,10 +124,10 @@ static void BM_AS24_Inversion(benchmark::State& state) {
     }
 }
 
-BENCHMARK_TEMPLATE(BM_AS24_Inversion, 4)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
-BENCHMARK_TEMPLATE(BM_AS24_Inversion, 8)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
-BENCHMARK_TEMPLATE(BM_AS24_Inversion, 16)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
-BENCHMARK_TEMPLATE(BM_AS24_Inversion, 32)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
-BENCHMARK_TEMPLATE(BM_AS24_Inversion, 64)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
+BENCHMARK_TEMPLATE(BM_AR24_Inversion, 4)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
+BENCHMARK_TEMPLATE(BM_AR24_Inversion, 8)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
+BENCHMARK_TEMPLATE(BM_AR24_Inversion, 16)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
+BENCHMARK_TEMPLATE(BM_AR24_Inversion, 32)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
+BENCHMARK_TEMPLATE(BM_AR24_Inversion, 64)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
 
 BENCHMARK_MAIN();

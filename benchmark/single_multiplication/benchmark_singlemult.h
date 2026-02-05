@@ -165,7 +165,7 @@ auto setupRT22() -> SetupOutput<d> {
 }
 
 template <int d>
-auto setupAS24() {
+auto setupAR24() {
     CCParams<CryptoContextCKKSRNS> parameters;
     parameters.SetMultiplicativeDepth(2);
     parameters.SetScalingModSize(50);
@@ -192,7 +192,7 @@ auto setupAS24() {
     cc->EvalMultKeyGen(keyPair.secretKey);
 
     auto enc = std::make_shared<Encryption>(cc, keyPair.publicKey);
-    auto algo = std::make_unique<MatrixMult_AS24<d>>(enc, cc, keyPair.publicKey, rotations);
+    auto algo = std::make_unique<MatrixMult_AR24<d>>(enc, cc, keyPair.publicKey, rotations);
 
     std::vector<double> matrixA(d * d);
     std::vector<double> matrixB(d * d);
@@ -427,8 +427,8 @@ static void BM_RT22(benchmark::State& state) {
 }
 
 template <int d>
-static void BM_AS24(benchmark::State& state) {
-    auto [cc, algo, enc_matrixA, enc_matrixB] = setupAS24<d>();
+static void BM_AR24(benchmark::State& state) {
+    auto [cc, algo, enc_matrixA, enc_matrixB] = setupAR24<d>();
     std::vector<double> times;
     
     for (auto _ : state) {

@@ -158,6 +158,48 @@ void saveEncryptedResults(const std::string& filename,
         file << std::endl << std::endl;
     }
 
+    file << "=== S_B (" << f << "x" << f << ") ===" << std::endl;
+    for (size_t i = 0; i < f; i++) {
+        for (size_t j = 0; j < f; j++) {
+            file << std::setw(10) << result.Sb_decrypted[i * f_tilde + j] << " ";
+        }
+        file << std::endl;
+    }
+    file << std::endl;
+
+    // Intermediate results: X_bar_c and S_c per class
+    int largeDim = HD_MATRIX_DIM;  // 256
+    for (size_t c = 0; c < result.X_bar_c_decrypted.size(); c++) {
+        size_t s_c = result.classCounts[c];
+
+        file << "=== X_bar_c (class " << c << ", first 10 rows, " << f << " cols) ===" << std::endl;
+        for (size_t row = 0; row < 10 && row < s_c; row++) {
+            for (size_t col = 0; col < f; col++) {
+                file << std::setw(10) << result.X_bar_c_decrypted[c][row * largeDim + col] << " ";
+            }
+            file << std::endl;
+        }
+        file << std::endl;
+
+        file << "=== S_c (class " << c << " scatter, " << f << "x" << f << ", 256x256 top-left) ===" << std::endl;
+        for (size_t i = 0; i < f; i++) {
+            for (size_t j = 0; j < f; j++) {
+                file << std::setw(10) << result.S_c_decrypted[c][i * largeDim + j] << " ";
+            }
+            file << std::endl;
+        }
+        file << std::endl;
+    }
+
+    file << "=== S_W (" << f << "x" << f << ") ===" << std::endl;
+    for (size_t i = 0; i < f; i++) {
+        for (size_t j = 0; j < f; j++) {
+            file << std::setw(10) << result.Sw_decrypted[i * f_tilde + j] << " ";
+        }
+        file << std::endl;
+    }
+    file << std::endl;
+
     file << "=== S_W^{-1} (" << f << "x" << f << ") ===" << std::endl;
     for (size_t i = 0; i < f; i++) {
         for (size_t j = 0; j < f; j++) {
@@ -172,8 +214,8 @@ void saveEncryptedResults(const std::string& filename,
 
     file << "=== Timing ===" << std::endl;
     file << "Mean computation: " << timings.meanComputation.count() << " s" << std::endl;
-    file << "S_W computation: " << timings.swComputation.count() << " s" << std::endl;
     file << "S_B computation: " << timings.sbComputation.count() << " s" << std::endl;
+    file << "S_W computation: " << timings.swComputation.count() << " s" << std::endl;
     file << "Matrix inversion: " << timings.inversionTime.count() << " s" << std::endl;
     file << "Total: " << timings.totalTime.count() << " s" << std::endl;
 
@@ -215,8 +257,8 @@ void runEncryptedLDA(const std::string& algorithmName,
     std::cout << "\n--- Timing Summary ---" << std::endl;
     std::cout << "Mean computation:   " << std::setprecision(3)
               << timings.meanComputation.count() << " s" << std::endl;
-    std::cout << "S_W computation:    " << timings.swComputation.count() << " s" << std::endl;
     std::cout << "S_B computation:    " << timings.sbComputation.count() << " s" << std::endl;
+    std::cout << "S_W computation:    " << timings.swComputation.count() << " s" << std::endl;
     std::cout << "Matrix inversion:   " << timings.inversionTime.count() << " s" << std::endl;
     std::cout << "Total training:     " << timings.totalTime.count() << std::endl << std::flush;
 
@@ -274,17 +316,19 @@ int main(int argc, char* argv[]) {
     LDADataEncoder::normalizeFeatures(trainSet);
     LDADataEncoder::normalizeWithParams(testSet, trainSet);
 
-    // Encode (CKKS-style packing)
+    // Encode as 256×256 matrices for JKLS18
     std::cout << "\n--- Encoding Data ---" << std::endl;
-    auto encodedTrain = LDADataEncoder::encode(trainSet);
+    int largeDim = HD_MATRIX_DIM;  // 256
+    auto encodedTrain = LDADataEncoder::encode(trainSet, largeDim);
 
     std::cout << "Features: " << trainSet.numFeatures << " (padded: " << trainSet.paddedFeatures << ")" << std::endl;
-    std::cout << "Samples: " << trainSet.numSamples << " (padded: " << trainSet.paddedSamples << ")" << std::endl;
+    std::cout << "Samples: " << trainSet.numSamples << std::endl;
+    std::cout << "Encoding: " << largeDim << "x" << largeDim << " = " << largeDim * largeDim << " slots" << std::endl;
 
     // ========== Setup CKKS Encryption ==========
     std::cout << "\n--- Setting up CKKS Encryption ---" << std::endl;
 
-    int maxDim = HD_MATRIX_DIM;  // 256 for HD dataset
+    int maxDim = largeDim;  // 256 for HD dataset
     int multDepth;  // High depth for matrix operations + inversion
     uint32_t scalingModSize;
     uint32_t firstModSize;

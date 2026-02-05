@@ -207,9 +207,8 @@ public:
         LDAEncryptedResult result;
         size_t f = dataset.numFeatures;            // 13 for HD
         size_t f_tilde = dataset.paddedFeatures;   // 16
-        size_t s_tilde = dataset.paddedSamples;    // 256
         size_t numClasses = dataset.numClasses;    // 2
-        int largeDim = HD_MATRIX_DIM;              // 256 (max(s̃, f̃))
+        int largeDim = HD_MATRIX_DIM;              // 256
 
         result.classCounts = dataset.samplesPerClass;
         result.classMeans.resize(numClasses);
@@ -219,8 +218,8 @@ public:
         if (verbose) {
             std::cout << "\n========== LDA Training (AR24 Encrypted) ==========" << std::endl;
             std::cout << "Features: " << f << " (padded: " << f_tilde << ")" << std::endl;
-            std::cout << "Samples: " << dataset.numSamples << " (padded: " << s_tilde << ")" << std::endl;
-            std::cout << "Matrix dimension for JKLS18: " << largeDim << "x" << largeDim << std::endl;
+            std::cout << "Samples: " << dataset.numSamples << std::endl;
+            std::cout << "Matrix dimension: " << largeDim << "x" << largeDim << std::endl;
             std::cout << "Bootstrapping: " << (m_useBootstrapping ? "enabled" : "disabled") << std::endl;
             std::cout << "Multiplicative depth: " << m_multDepth << std::endl;
         }
@@ -230,31 +229,45 @@ public:
         auto meanStart = high_resolution_clock::now();
 
         result.classMeansEncrypted.resize(numClasses);
-        std::vector<Ciphertext<DCRTPoly>> classMeanReplicated(numClasses);
+        std::vector<Ciphertext<DCRTPoly>> classMeanForSw(numClasses);
+        std::vector<Ciphertext<DCRTPoly>> classMeanForSb(numClasses);
 
         for (size_t c = 0; c < numClasses; c++) {
             size_t s_c = dataset.samplesPerClass[c];
-            size_t s_tilde_c = dataset.paddedSamplesPerClass[c];
 
-            // Compute mean via folding sum
-            classMeanReplicated[c] = eval_computeMean(classDataEncrypted[c], s_c, s_tilde_c, f_tilde);
-            result.classMeansEncrypted[c] = classMeanReplicated[c]->Clone();
+            // Mean for S_W: masked division (zeros in padding rows)
+            classMeanForSw[c] = eval_computeMeanForSw(classDataEncrypted[c], s_c, f, largeDim);
+
+            // Mean for S_B: scalar division, extract to f_tilde slots
+            classMeanForSb[c] = eval_computeMeanForSb(classDataEncrypted[c], s_c, f_tilde, largeDim);
+            result.classMeansEncrypted[c] = classMeanForSb[c]->Clone();
 
             // Decrypt for plaintext inference
             Plaintext ptx;
-            m_cc->Decrypt(m_keyPair.secretKey, classMeanReplicated[c], &ptx);
+            m_cc->Decrypt(m_keyPair.secretKey, classMeanForSb[c], &ptx);
             std::vector<double> meanVec = ptx->GetRealPackedValue();
             result.classMeans[c] = std::vector<double>(meanVec.begin(), meanVec.begin() + f);
 
             if (verbose) {
-                debugPrintLevel("Class " + std::to_string(c) + " mean", classMeanReplicated[c]);
-                debugPrintVector("Class " + std::to_string(c) + " Mean", classMeanReplicated[c], f);
+                debugPrintLevel("Class " + std::to_string(c) + " mean (for S_W)", classMeanForSw[c]);
+                debugPrintVector("Class " + std::to_string(c) + " Mean (for S_B)", classMeanForSb[c], f);
+
+                std::cout << "  Mean replication check for S_W (rows 0,1,2):" << std::endl;
+                Plaintext ptxSw;
+                m_cc->Decrypt(m_keyPair.secretKey, classMeanForSw[c], &ptxSw);
+                std::vector<double> meanSwVals = ptxSw->GetRealPackedValue();
+                for (int row = 0; row < 3 && row < (int)s_c; row++) {
+                    std::cout << "    Row " << row << ": ";
+                    for (size_t j = 0; j < std::min(f, (size_t)5); j++) {
+                        std::cout << std::setprecision(4) << std::fixed << meanSwVals[row * largeDim + j] << " ";
+                    }
+                    std::cout << "..." << std::endl;
+                }
+                std::cout << std::flush;
             }
         }
 
-        // Compute global mean from all samples
-        // We need to encrypt all samples first, or compute from class means
-        // For simplicity, compute as weighted average of class means
+        // Compute global mean (weighted average of class means)
         result.globalMean.resize(f, 0.0);
         size_t totalSamples = 0;
         for (size_t c = 0; c < numClasses; c++) {
@@ -278,57 +291,14 @@ public:
         auto meanEnd = high_resolution_clock::now();
         timings.meanComputation = meanEnd - meanStart;
 
-        // ========== Step 2: Compute S_W (Within-class scatter) ==========
-        // S_W = sum_c (X_c - μ_c)^T * (X_c - μ_c)
-        if (verbose) std::cout << "[Step 2] Computing S_W (within-class scatter)..." << std::endl;
-        auto swStart = high_resolution_clock::now();
-
-        // Initialize S_W as zeros
-        auto Sw = getZeroCiphertext(largeDim * largeDim);
-
-        for (size_t c = 0; c < numClasses; c++) {
-            size_t s_tilde_c = dataset.paddedSamplesPerClass[c];
-
-            // Replicate mean to match data shape
-            auto meanRep = eval_replicateMean(classMeanReplicated[c], f_tilde, s_tilde_c * f_tilde);
-
-            // X_bar_c = X_c - μ_c
-            auto X_bar_c = m_cc->EvalSub(classDataEncrypted[c], meanRep);
-
-            // For JKLS18: need to reshape X_bar_c into largeDim × largeDim matrix
-            // X_bar_c is s_tilde_c × f_tilde, embed into largeDim × largeDim
-            X_bar_c->SetSlots(largeDim * largeDim);
-
-            // Compute X_bar_c^T
-            auto X_bar_c_T = eval_transpose(X_bar_c, largeDim, largeDim * largeDim);
-
-            // S_c = X_bar_c^T * X_bar_c using JKLS18
-            auto S_c = eval_mult_JKLS18(X_bar_c_T, X_bar_c, largeDim);
-
-            // Accumulate
-            m_cc->EvalAddInPlace(Sw, S_c);
-        }
-
-        // Rebatch S_W from largeDim×largeDim to f_tilde×f_tilde
-        auto Sw_rebatched = rebatchToFeatureSpace(Sw, largeDim, f_tilde);
-
-        auto swEnd = high_resolution_clock::now();
-        timings.swComputation = swEnd - swStart;
-
-        if (verbose) {
-            std::cout << "  S_W computation complete" << std::endl;
-            debugPrintMatrix("S_W", Sw_rebatched, f, f, f_tilde);
-        }
-
-        // ========== Step 3: Compute S_B (Between-class scatter) ==========
-        // S_B = sum_c s_c * (μ_c - μ)(μ_c - μ)^T
-        if (verbose) std::cout << "[Step 3] Computing S_B (between-class scatter)..." << std::endl;
+        // ========== Step 2: Compute S_B (Between-class scatter) ==========
+        if (verbose) std::cout << "[Step 2] Computing S_B (between-class scatter)..." << std::endl;
         auto sbStart = high_resolution_clock::now();
 
         auto Sb = getZeroCiphertext(f_tilde * f_tilde);
 
-        // Encrypt global mean
-        std::vector<double> globalMeanPadded(f_tilde, 0.0);
+        // Encrypt global mean (f_tilde slots for S_B computation)
+        std::vector<double> globalMeanPadded(f_tilde * f_tilde, 0.0);
         for (size_t i = 0; i < f; i++) {
             globalMeanPadded[i] = result.globalMean[i];
         }
@@ -336,29 +306,176 @@ public:
         result.globalMeanEncrypted = globalMeanEnc->Clone();
 
         for (size_t c = 0; c < numClasses; c++) {
-            // diff = μ_c - μ
-            auto diff = m_cc->EvalSub(classMeanReplicated[c], globalMeanEnc);
+            if (verbose) {
+                std::cout << "  Class " << c << ": computing (mu_c - mu) * (mu_c - mu)^T..." << std::endl;
+            }
 
-            // outer = diff * diff^T
+            // diff = μ_c - μ (both are f_tilde * f_tilde slots)
+            auto diff = m_cc->EvalSub(classMeanForSb[c], globalMeanEnc);
+
+            if (verbose) {
+                debugPrintVector("  (mu_" + std::to_string(c) + " - mu)", diff, f);
+            }
+
+            // outer = diff * diff^T (16×16)
             auto outer = eval_outerProduct(diff, f, f_tilde);
 
             // Scale by class size
             auto scaled = m_cc->EvalMult(outer, (double)dataset.samplesPerClass[c]);
 
-            // Accumulate
+            if (verbose) {
+                std::cout << "  Scaled by n_" << c << " = " << dataset.samplesPerClass[c] << std::endl;
+            }
+
             m_cc->EvalAddInPlace(Sb, scaled);
         }
 
         auto sbEnd = high_resolution_clock::now();
         timings.sbComputation = sbEnd - sbStart;
 
+        // Decrypt S_B for debugging
+        {
+            Plaintext ptxSb;
+            m_cc->Decrypt(m_keyPair.secretKey, Sb, &ptxSb);
+            result.Sb_decrypted = ptxSb->GetRealPackedValue();
+            result.Sb_decrypted.resize(f_tilde * f_tilde);
+        }
+
         if (verbose) {
             std::cout << "  S_B computation complete" << std::endl;
             debugPrintMatrix("S_B", Sb, f, f, f_tilde);
         }
 
+        // ========== Step 3: Compute S_W (Within-class scatter) ==========
+        if (verbose) std::cout << "[Step 3] Computing S_W (within-class scatter)..." << std::endl;
+        auto swStart = high_resolution_clock::now();
+
+        auto Sw = getZeroCiphertext(largeDim * largeDim);
+        result.X_bar_c_decrypted.resize(numClasses);
+        result.S_c_decrypted.resize(numClasses);
+
+        for (size_t c = 0; c < numClasses; c++) {
+            size_t s_c = dataset.samplesPerClass[c];
+
+            if (verbose) {
+                std::cout << "  Class " << c << " (n=" << s_c << "):" << std::endl;
+                std::cout << "    Computing X_bar = X - mu..." << std::endl;
+            }
+
+            // X_bar_c = X_c - μ_c (both are 256×256, μ has zeros in padding rows)
+            auto X_bar_c = m_cc->EvalSub(classDataEncrypted[c], classMeanForSw[c]);
+
+            // Decrypt and store X_bar_c for debugging
+            {
+                Plaintext ptxXbar;
+                m_cc->Decrypt(m_keyPair.secretKey, X_bar_c, &ptxXbar);
+                result.X_bar_c_decrypted[c] = ptxXbar->GetRealPackedValue();
+            }
+
+            if (verbose) {
+                std::cout << "    X_bar_c computed. Level: " << X_bar_c->GetLevel() << std::endl;
+
+                std::cout << "    X_bar_c (first 5 rows, first " << f << " cols):" << std::endl;
+                for (int row = 0; row < 5 && row < (int)s_c; row++) {
+                    std::cout << "      Row " << row << ": ";
+                    for (size_t col = 0; col < f; col++) {
+                        std::cout << std::setw(10) << std::setprecision(4) << std::fixed
+                                  << result.X_bar_c_decrypted[c][row * largeDim + col] << " ";
+                    }
+                    std::cout << std::endl;
+                }
+                std::cout << std::endl;
+            }
+
+            // Compute X_bar_c^T
+            if (verbose) {
+                std::cout << "    Computing X_bar_c^T (transpose)..." << std::endl;
+            }
+            auto X_bar_c_T = eval_transpose(X_bar_c, largeDim, largeDim * largeDim);
+
+            if (verbose) {
+                std::cout << "    X_bar_c^T computed. Level: " << X_bar_c_T->GetLevel() << std::endl;
+
+                // Print first few rows of X_bar_c^T
+                Plaintext ptxXbarT;
+                m_cc->Decrypt(m_keyPair.secretKey, X_bar_c_T, &ptxXbarT);
+                std::vector<double> xbarTVals = ptxXbarT->GetRealPackedValue();
+
+                std::cout << "    X_bar_c^T (first " << f << " rows, first 5 cols):" << std::endl;
+                for (size_t row = 0; row < f; row++) {
+                    std::cout << "      Row " << row << ": ";
+                    for (int col = 0; col < 5 && col < (int)s_c; col++) {
+                        std::cout << std::setw(10) << std::setprecision(4) << std::fixed
+                                  << xbarTVals[row * largeDim + col] << " ";
+                    }
+                    std::cout << "..." << std::endl;
+                }
+                std::cout << std::endl;
+            }
+
+            // S_c = X_bar_c^T * X_bar_c using JKLS18
+            if (verbose) {
+                std::cout << "    Computing S_c = X_bar_c^T * X_bar_c with JKLS18 (" << largeDim << "x" << largeDim << ")..." << std::endl << std::flush;
+            }
+            auto S_c = eval_mult_JKLS18(X_bar_c_T, X_bar_c, largeDim);
+
+            // Decrypt and store S_c (256x256) for debugging
+            {
+                Plaintext ptxSc256;
+                m_cc->Decrypt(m_keyPair.secretKey, S_c, &ptxSc256);
+                result.S_c_decrypted[c] = ptxSc256->GetRealPackedValue();
+            }
+
+            if (verbose) {
+                std::cout << "    S_c computed. Level: " << S_c->GetLevel() << std::endl;
+
+                std::cout << "    S_c (256x256, top-left " << f << "x" << f << " before rebatch):" << std::endl;
+                for (size_t row = 0; row < f; row++) {
+                    std::cout << "      ";
+                    for (size_t col = 0; col < f; col++) {
+                        std::cout << std::setw(10) << std::setprecision(4) << std::fixed
+                                  << result.S_c_decrypted[c][row * largeDim + col] << " ";
+                    }
+                    std::cout << std::endl;
+                }
+                std::cout << std::endl;
+
+                // Print S_c after rebatch (16x16)
+                auto S_c_rebatched = rebatchToFeatureSpace(S_c, largeDim, f_tilde);
+                debugPrintMatrix("    S_c (class " + std::to_string(c) + " scatter, after rebatch)", S_c_rebatched, f, f, f_tilde);
+            }
+
+            m_cc->EvalAddInPlace(Sw, S_c);
+
+            if (verbose) {
+                std::cout << "    Accumulated to S_W" << std::endl;
+            }
+        }
+
+        // Rebatch S_W from 256×256 to 16×16
+        if (verbose) {
+            std::cout << "  Rebatching S_W from " << largeDim << "x" << largeDim << " to " << f_tilde << "x" << f_tilde << "..." << std::endl;
+        }
+        auto Sw_rebatched = rebatchToFeatureSpace(Sw, largeDim, f_tilde);
+
+        auto swEnd = high_resolution_clock::now();
+        timings.swComputation = swEnd - swStart;
+
+        // Decrypt S_W for debugging
+        {
+            Plaintext ptxSw;
+            m_cc->Decrypt(m_keyPair.secretKey, Sw_rebatched, &ptxSw);
+            result.Sw_decrypted = ptxSw->GetRealPackedValue();
+            result.Sw_decrypted.resize(f_tilde * f_tilde);
+        }
+
+        if (verbose) {
+            std::cout << "  S_W computation complete" << std::endl;
+            debugPrintMatrix("S_W", Sw_rebatched, f, f, f_tilde);
+        }
+
         // ========== Step 4: Compute S_W^{-1} ==========
-        if (verbose) std::cout << "[Step 4] Computing S_W^{-1} (AR24 Schulz iteration)..." << std::endl;
+        if (verbose) std::cout << "\n[Step 4] Computing S_W^{-1} (AR24 Schulz iteration)..." << std::endl;
         auto invStart = high_resolution_clock::now();
 
         result.Sw_inv = eval_inverse(Sw_rebatched, f_tilde, inversionIterations);
@@ -377,10 +494,9 @@ public:
         result.Sw_inv_decrypted = ptx->GetRealPackedValue();
         result.Sw_inv_decrypted.resize(f_tilde * f_tilde);
 
-        // ========== Step 5: Compute S_W^{-1} * S_B (optional) ==========
+        // ========== Step 5: Compute S_W^{-1} * S_B ==========
         if (verbose) std::cout << "[Step 5] Computing S_W^{-1} * S_B..." << std::endl;
 
-        // For f_tilde×f_tilde, use direct JKLS18 or AR24 multiplication
         int invS = std::min((int)f_tilde, (int)(m_cc->GetRingDimension() / 2 / f_tilde / f_tilde));
         invS = std::max(1, invS);
 

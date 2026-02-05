@@ -30,8 +30,14 @@ struct LDAEncryptedResult {
     // Decrypted values for inference (done on client side)
     std::vector<std::vector<double>> classMeans;
     std::vector<double> globalMean;
+    std::vector<double> Sw_decrypted;     // S_W matrix (for debugging)
+    std::vector<double> Sb_decrypted;     // S_B matrix (for debugging)
     std::vector<double> Sw_inv_decrypted;
     std::vector<size_t> classCounts;
+
+    // Intermediate results for debugging
+    std::vector<std::vector<double>> X_bar_c_decrypted;   // Centered data per class
+    std::vector<std::vector<double>> S_c_decrypted;       // Scatter matrix per class (before rebatch)
 };
 
 struct LDATimingResult {
@@ -143,105 +149,114 @@ protected:
     }
 
     // ============ Folding Sum for Mean Computation ============
-    // Given vector packed as s̃ rows of f̃ features, sum all rows
-    // Result: sum replicated s̃ times
+    // Given 256×256 matrix, sum all rows
+    // Result: sum replicated in all 256 rows
 
-    Ciphertext<DCRTPoly> eval_foldingSum(Ciphertext<DCRTPoly> X, int paddedSamples, int paddedFeatures) {
+    Ciphertext<DCRTPoly> eval_foldingSum(Ciphertext<DCRTPoly> X, int largeDim) {
         auto result = X->Clone();
-        int rowSize = paddedFeatures;
 
-        // log2(paddedSamples) rotations and additions
-        for (int i = 1; i < paddedSamples; i *= 2) {
-            auto rotated = rot.rotate(result, i * rowSize);
+        for (int i = 1; i < largeDim; i *= 2) {
+            auto rotated = rot.rotate(result, i * largeDim);
             m_cc->EvalAddInPlace(result, rotated);
         }
 
         return result;
     }
 
-    // Compute mean: folding sum + division by actual sample count
-    Ciphertext<DCRTPoly> eval_computeMean(Ciphertext<DCRTPoly> X, int actualSamples,
-                                          int paddedSamples, int paddedFeatures) {
-        auto summed = eval_foldingSum(X, paddedSamples, paddedFeatures);
-        return m_cc->EvalMult(summed, 1.0 / actualSamples);
-    }
+    // Compute mean for S_W: masked division (zeros in padding rows)
+    // Result: mean in rows 0 to actualSamples-1, zeros in rows actualSamples to largeDim-1
+    Ciphertext<DCRTPoly> eval_computeMeanForSw(Ciphertext<DCRTPoly> X, int actualSamples,
+                                               int actualFeatures, int largeDim) {
+        auto summed = eval_foldingSum(X, largeDim);
 
-    // ============ Replicate Mean for Broadcasting ============
-    // Given mean in first f̃ slots, replicate to fill targetSlots
-    // Uses SetSlots for sparse packing replication
-
-    Ciphertext<DCRTPoly> eval_replicateMean(Ciphertext<DCRTPoly> mean, int paddedFeatures, int targetSlots) {
-        // First extract just the first row (f̃ elements)
-        std::vector<double> rowMask(paddedFeatures, 1.0);
-        auto singleRow = m_cc->EvalMult(mean,
-            m_cc->MakeCKKSPackedPlaintext(rowMask, 1, 0, nullptr, paddedFeatures));
-
-        // Use SetSlots to expand to target size (automatic replication in CKKS sparse packing)
-        singleRow->SetSlots(targetSlots);
-
-        // Clean up: ensure proper replication pattern
-        // After SetSlots, the f̃ values get replicated, but we need row-wise replication
-        // So we need to use rotation and masking to achieve the right pattern
-
-        // Alternative approach: sum shifted copies
-        auto result = getZeroCiphertext(targetSlots);
-        int numReplicates = targetSlots / paddedFeatures;
-
-        for (int i = 0; i < numReplicates; i++) {
-            // Shift mean to position i*paddedFeatures
-            std::vector<double> posMask(targetSlots, 0.0);
-            for (int j = 0; j < paddedFeatures; j++) {
-                posMask[i * paddedFeatures + j] = 1.0;
+        // Create division mask:
+        // rows 0 to actualSamples-1, cols 0 to actualFeatures-1: 1/actualSamples
+        // everything else: 0
+        std::vector<double> divMask(largeDim * largeDim, 0.0);
+        for (int row = 0; row < actualSamples; row++) {
+            for (int col = 0; col < actualFeatures; col++) {
+                divMask[row * largeDim + col] = 1.0 / actualSamples;
             }
-            auto shifted = m_cc->EvalMult(rot.rotate(singleRow, -i * paddedFeatures),
-                m_cc->MakeCKKSPackedPlaintext(posMask, 1, 0, nullptr, targetSlots));
-            m_cc->EvalAddInPlace(result, shifted);
         }
 
-        return result;
+        auto maskPtx = m_cc->MakeCKKSPackedPlaintext(divMask, 1, 0, nullptr, largeDim * largeDim);
+        return m_cc->EvalMult(summed, maskPtx);
+    }
+
+    // Compute mean for S_B: scalar division, then rebatch from 256×256 to 16×16
+    // Result: mean vector in 16×16 format (256 slots), mean replicated in each row
+    Ciphertext<DCRTPoly> eval_computeMeanForSb(Ciphertext<DCRTPoly> X, int actualSamples,
+                                               int f_tilde, int largeDim) {
+        auto summed = eval_foldingSum(X, largeDim);
+
+        // Scalar division - mean is now replicated in all 256 rows
+        // Each row has [m0, m1, ..., m12, 0, ..., 0] (256 columns)
+        auto meanFull = m_cc->EvalMult(summed, 1.0 / actualSamples);
+
+        // Rebatch from 256-column rows to 16-column rows
+        // Same logic as rebatchToFeatureSpace
+        auto rebatched = meanFull->Clone();
+        for (int i = 0; i < f_tilde - 1; i++) {
+            m_cc->EvalAddInPlace(rebatched,
+                rot.rotate(meanFull, (largeDim - f_tilde) * (i + 1)));
+        }
+
+        // Mask to keep only f_tilde × f_tilde elements
+        std::vector<double> msk(f_tilde * f_tilde, 1.0);
+        rebatched = m_cc->EvalMult(rebatched,
+            m_cc->MakeCKKSPackedPlaintext(msk, 1, 0, nullptr, largeDim * largeDim));
+
+        // Collapse remaining copies
+        int numIterations = (int)log2((double)(largeDim * largeDim) / (f_tilde * f_tilde));
+        for (int i = 0; i < numIterations; i++) {
+            m_cc->EvalAddInPlace(rebatched,
+                rot.rotate(rebatched, -largeDim * (1 << i)));
+        }
+
+        rebatched->SetSlots(f_tilde * f_tilde);
+        return rebatched;
     }
 
     // ============ Outer Product for S_B ============
-    // Compute (mu_c - mu)(mu_c - mu)^T using replicated vectors
-    // Input: diff vector of length f (in first f̃ slots), replicated
-    // Output: f×f matrix (padded to f̃×f̃)
+    // Compute (mu_c - mu)(mu_c - mu)^T
+    // Input: diff vector in first f_tilde slots (from eval_computeMeanForSb)
+    // Output: f_tilde × f_tilde matrix
 
-    Ciphertext<DCRTPoly> eval_outerProduct(Ciphertext<DCRTPoly> diff, int actualF, int paddedF) {
-        // diff is assumed to be in first paddedF slots: [d0, d1, ..., d_{f-1}, 0, ..., 0]
-        // We need to compute diff * diff^T
+    Ciphertext<DCRTPoly> eval_outerProduct(Ciphertext<DCRTPoly> diff, int actualF, int f_tilde) {
+        // diff is in f_tilde*f_tilde slots, with meaningful values in first f_tilde positions
+        // We need to compute diff * diff^T = f_tilde × f_tilde matrix
 
-        // Step 1: Create replicated column vector: each d_i repeated f̃ times consecutively
-        // [d0, d0, d0, ..., d1, d1, d1, ..., d_{f-1}, d_{f-1}, ...]
-        auto colVec = getZeroCiphertext(paddedF * paddedF);
+        // Step 1: Create column vector
+        // Row i should have d_i replicated: [d_i, d_i, ..., d_i]
+        auto colVec = getZeroCiphertext(f_tilde * f_tilde);
+
         for (int i = 0; i < actualF; i++) {
-            // Extract d_i and replicate paddedF times starting at position i*paddedF
-            std::vector<double> extractMask(paddedF, 0.0);
+            // Extract d_i
+            std::vector<double> extractMask(f_tilde * f_tilde, 0.0);
             extractMask[i] = 1.0;
             auto di = m_cc->EvalMult(diff,
-                m_cc->MakeCKKSPackedPlaintext(extractMask, 1, 0, nullptr, paddedF));
+                m_cc->MakeCKKSPackedPlaintext(extractMask, 1, 0, nullptr, f_tilde * f_tilde));
 
-            // Sum to replicate within paddedF slots
-            for (int j = 1; j < paddedF; j *= 2) {
+            // Replicate d_i to fill f_tilde slots
+            for (int j = 1; j < f_tilde; j *= 2) {
                 m_cc->EvalAddInPlace(di, rot.rotate(di, -j));
             }
 
-            // Position at row i
-            std::vector<double> rowMask(paddedF * paddedF, 0.0);
-            for (int j = 0; j < paddedF; j++) {
-                rowMask[i * paddedF + j] = 1.0;
+            // Position at row i (mask to row i only)
+            std::vector<double> rowMask(f_tilde * f_tilde, 0.0);
+            for (int j = 0; j < f_tilde; j++) {
+                rowMask[i * f_tilde + j] = 1.0;
             }
-            di->SetSlots(paddedF * paddedF);
             auto diRow = m_cc->EvalMult(di,
-                m_cc->MakeCKKSPackedPlaintext(rowMask, 1, 0, nullptr, paddedF * paddedF));
+                m_cc->MakeCKKSPackedPlaintext(rowMask, 1, 0, nullptr, f_tilde * f_tilde));
             m_cc->EvalAddInPlace(colVec, diRow);
         }
 
-        // Step 2: Create replicated row vector: diff repeated f̃ times
-        // [d0, d1, ..., d_{f-1}, 0, ..., d0, d1, ..., d_{f-1}, 0, ..., ...]
-        diff->SetSlots(paddedF * paddedF);
+        // Step 2: Create row vector (diff replicated f_tilde times)
+        // [d0, d1, ..., d_{f-1}, 0, ..., 0, d0, d1, ..., d_{f-1}, 0, ..., 0, ...]
         auto rowVec = diff->Clone();
-        for (int i = 1; i < paddedF; i *= 2) {
-            m_cc->EvalAddInPlace(rowVec, rot.rotate(rowVec, -i * paddedF));
+        for (int i = 1; i < f_tilde; i *= 2) {
+            m_cc->EvalAddInPlace(rowVec, rot.rotate(rowVec, -i * f_tilde));
         }
 
         // Step 3: Element-wise multiply to get outer product
@@ -348,33 +363,36 @@ protected:
         return C;
     }
 
-    // ============ Rebatch: Extract f×f from larger matrix ============
-    // After computing X^T*X in d×d space, extract the actual f̃×f̃ result
+    // ============ Rebatch: Extract f̃×f̃ from largeDim×largeDim matrix ============
+    // After computing X^T*X in largeDim×largeDim space, extract the actual f_tilde×f_tilde result
+    // Based on linear-regression rebatch logic
 
     Ciphertext<DCRTPoly> rebatchToFeatureSpace(Ciphertext<DCRTPoly> M,
-                                               int largeDim, int smallDim) {
-        // M is largeDim×largeDim, we want to extract smallDim×smallDim
-        // The actual data is in the top-left corner
+                                               int largeDim, int f_tilde) {
+        // M is largeDim×largeDim (e.g., 256×256), we want f_tilde×f_tilde (e.g., 16×16)
+        // The actual data is in the top-left corner but rows are spaced largeDim apart
 
-        // First, sum along the rows to collect the smallDim columns
+        // Step 1: Shift rows to be contiguous
+        // Row i of result is at position i*largeDim in M, needs to be at position i*f_tilde
         auto rebatched = M->Clone();
-        for (int i = 0; i < smallDim - 1; i++) {
+        for (int i = 0; i < f_tilde - 1; i++) {
             m_cc->EvalAddInPlace(rebatched,
-                rot.rotate(M, (largeDim - smallDim) * (i + 1)));
+                rot.rotate(M, (largeDim - f_tilde) * (i + 1)));
         }
 
-        // Mask to keep only smallDim×smallDim
-        std::vector<double> msk(smallDim * smallDim, 1.0);
+        // Step 2: Mask to keep only f_tilde×f_tilde elements
+        std::vector<double> msk(f_tilde * f_tilde, 1.0);
         rebatched = m_cc->EvalMult(rebatched,
             m_cc->MakeCKKSPackedPlaintext(msk, 1, 0, nullptr, largeDim * largeDim));
 
-        // Compact the rows
-        for (int i = 0; i < (int)log2((largeDim * largeDim) / (smallDim * smallDim)); i++) {
+        // Step 3: Collapse remaining copies using log2 additions
+        int numIterations = (int)log2((double)(largeDim * largeDim) / (f_tilde * f_tilde));
+        for (int i = 0; i < numIterations; i++) {
             m_cc->EvalAddInPlace(rebatched,
                 rot.rotate(rebatched, -largeDim * (1 << i)));
         }
 
-        rebatched->SetSlots(smallDim * smallDim);
+        rebatched->SetSlots(f_tilde * f_tilde);
         return rebatched;
     }
 

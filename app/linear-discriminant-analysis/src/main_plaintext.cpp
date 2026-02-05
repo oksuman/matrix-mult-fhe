@@ -48,7 +48,7 @@ void runLDA(const std::string& datasetName,
 
     // Encode data
     std::cout << "--- Encoding Data (CKKS-style packing) ---" << std::endl;
-    auto encodedTrain = LDADataEncoder::encode(trainSet);
+    auto encodedTrain = LDADataEncoder::encodePlaintext(trainSet);
 
     std::cout << "All samples vector length: " << encodedTrain.allSamples.size()
               << " (" << encodedTrain.paddedSamples << " x " << encodedTrain.paddedFeatures << ")" << std::endl;
@@ -81,14 +81,14 @@ void runLDA(const std::string& datasetName,
 
 int main(int argc, char* argv[]) {
     bool verbose = true;
-    bool saveResults = false;
+    bool saveResults = true;  // Save results by default
 
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         if (arg == "-q" || arg == "--quiet") {
             verbose = false;
-        } else if (arg == "--save") {
-            saveResults = true;
+        } else if (arg == "--no-save") {
+            saveResults = false;
         }
     }
 

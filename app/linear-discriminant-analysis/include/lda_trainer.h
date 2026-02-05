@@ -17,6 +17,10 @@ struct LDATrainResult {
 
     size_t matrixDim;   // Actual feature dimension
     size_t paddedDim;   // Padded dimension (power of 2)
+
+    // Intermediate results for debugging
+    std::vector<std::vector<double>> X_bar_c;   // Centered data per class
+    std::vector<std::vector<double>> S_c;       // Scatter matrix per class
 };
 
 class LDATrainer {
@@ -125,41 +129,9 @@ public:
             }
         }
 
-        // ========== Step 3: Compute S_W (Within-class scatter) ==========
-        // S_W = sum_c sum_{x in class c} (x - mu_c)(x - mu_c)^T
-        //     = sum_c (X_c - mu_c)^T * (X_c - mu_c)
-        if (verbose) std::cout << "[Step 3] Computing S_W (within-class scatter)..." << std::endl;
-
-        std::vector<double> Sw(f_tilde * f_tilde, 0.0);
-
-        for (size_t c = 0; c < numClasses; c++) {
-            size_t s_c = dataset.samplesPerClass[c];
-            size_t s_tilde_c = dataset.paddedSamplesPerClass[c];
-
-            // Replicate class mean to match encoded data shape
-            auto meanReplicated = PlaintextOps::replicateRow(
-                PlaintextOps::extractFirstRow(classMeanReplicated[c], f_tilde),
-                s_tilde_c,
-                f_tilde
-            );
-
-            // X_bar_c = X_c - mu_c (broadcast subtraction)
-            auto X_bar_c = PlaintextOps::sub(encoded.classSamples[c], meanReplicated);
-
-            // S_c = X_bar_c^T * X_bar_c
-            auto S_c = PlaintextOps::computeXtX(X_bar_c, s_c, f, s_tilde_c, f_tilde);
-
-            // Accumulate
-            PlaintextOps::addInPlace(Sw, S_c);
-        }
-
-        if (verbose) {
-            PlaintextOps::printMatrix(Sw, f, f, "S_W");
-        }
-
-        // ========== Step 4: Compute S_B (Between-class scatter) ==========
+        // ========== Step 3: Compute S_B (Between-class scatter) ==========
         // S_B = sum_c s_c * (mu_c - mu)(mu_c - mu)^T
-        if (verbose) std::cout << "[Step 4] Computing S_B (between-class scatter)..." << std::endl;
+        if (verbose) std::cout << "[Step 3] Computing S_B (between-class scatter)..." << std::endl;
 
         std::vector<double> Sb(f_tilde * f_tilde, 0.0);
 
@@ -170,11 +142,20 @@ public:
             auto classMean = PlaintextOps::extractFirstRow(classMeanReplicated[c], f_tilde);
             auto diff = PlaintextOps::sub(classMean, globalMean);
 
+            if (verbose) {
+                PlaintextOps::printVector(diff, f, "(mu_" + std::to_string(c) + " - mu)");
+            }
+
             // outer = diff * diff^T
             auto outer = PlaintextOps::outerProduct(diff, diff, f, f_tilde);
 
             // Scale by class size and accumulate
             auto scaled = PlaintextOps::multScalar(outer, static_cast<double>(s_c));
+
+            if (verbose) {
+                std::cout << "  Scaled by n_" << c << " = " << s_c << std::endl;
+            }
+
             PlaintextOps::addInPlace(Sb, scaled);
         }
 
@@ -182,8 +163,84 @@ public:
             PlaintextOps::printMatrix(Sb, f, f, "S_B");
         }
 
+        // ========== Step 4: Compute S_W (Within-class scatter) ==========
+        // S_W = sum_c sum_{x in class c} (x - mu_c)(x - mu_c)^T
+        //     = sum_c (X_c - mu_c)^T * (X_c - mu_c)
+        if (verbose) std::cout << "[Step 4] Computing S_W (within-class scatter)..." << std::endl;
+
+        std::vector<double> Sw(f_tilde * f_tilde, 0.0);
+        result.X_bar_c.resize(numClasses);
+        result.S_c.resize(numClasses);
+
+        for (size_t c = 0; c < numClasses; c++) {
+            size_t s_c = dataset.samplesPerClass[c];
+            size_t s_tilde_c = dataset.paddedSamplesPerClass[c];
+
+            if (verbose) {
+                std::cout << "  Class " << c << " (n=" << s_c << "):" << std::endl;
+                std::cout << "    Computing X_bar = X - mu..." << std::endl;
+            }
+
+            // Replicate class mean to match encoded data shape
+            auto meanReplicated = PlaintextOps::replicateRow(
+                PlaintextOps::extractFirstRow(classMeanReplicated[c], f_tilde),
+                s_tilde_c,
+                f_tilde
+            );
+
+            // X_bar_c = X_c - mu_c (broadcast subtraction)
+            auto X_bar_c = PlaintextOps::sub(encoded.classSamples[c], meanReplicated);
+            result.X_bar_c[c] = X_bar_c;  // Store for debugging
+
+            if (verbose) {
+                // Print first few rows of X_bar_c (centered data)
+                std::cout << "    X_bar_c (first 5 rows, first " << f << " cols):" << std::endl;
+                for (size_t row = 0; row < 5 && row < s_c; row++) {
+                    std::cout << "      Row " << row << ": ";
+                    for (size_t col = 0; col < f; col++) {
+                        std::cout << std::setw(10) << std::setprecision(4) << std::fixed
+                                  << X_bar_c[row * f_tilde + col] << " ";
+                    }
+                    std::cout << std::endl;
+                }
+                std::cout << std::endl;
+
+                // Print X_bar_c^T (first f rows, first 5 cols) - simulated transpose view
+                std::cout << "    X_bar_c^T (first " << f << " rows, first 5 cols):" << std::endl;
+                for (size_t row = 0; row < f; row++) {
+                    std::cout << "      Row " << row << ": ";
+                    for (size_t col = 0; col < 5 && col < s_c; col++) {
+                        // X_bar_c^T[row][col] = X_bar_c[col][row]
+                        std::cout << std::setw(10) << std::setprecision(4) << std::fixed
+                                  << X_bar_c[col * f_tilde + row] << " ";
+                    }
+                    std::cout << "..." << std::endl;
+                }
+                std::cout << std::endl;
+            }
+
+            // S_c = X_bar_c^T * X_bar_c
+            auto S_c = PlaintextOps::computeXtX(X_bar_c, s_c, f, s_tilde_c, f_tilde);
+            result.S_c[c] = S_c;  // Store for debugging
+
+            if (verbose) {
+                PlaintextOps::printMatrix(S_c, f, f, "    S_c (class " + std::to_string(c) + " scatter)");
+            }
+
+            // Accumulate
+            PlaintextOps::addInPlace(Sw, S_c);
+
+            if (verbose) {
+                std::cout << "    Accumulated to S_W" << std::endl;
+            }
+        }
+
+        if (verbose) {
+            PlaintextOps::printMatrix(Sw, f, f, "S_W");
+        }
+
         // ========== Step 5: Compute S_W^{-1} ==========
-        if (verbose) std::cout << "[Step 5] Computing S_W^{-1} (Schulz iteration, " << inversionIterations << " iters)..." << std::endl;
+        if (verbose) std::cout << "\n[Step 5] Computing S_W^{-1} (Schulz iteration, " << inversionIterations << " iters)..." << std::endl;
 
         // For inversion, we need to work with actual matrix dimension
         // Extract the f x f submatrix from the padded matrix
@@ -283,19 +340,42 @@ public:
             file << std::endl << std::endl;
         }
 
-        file << "=== S_W (" << f << "x" << f << ") ===" << std::endl;
+        file << "=== S_B (" << f << "x" << f << ") ===" << std::endl;
         for (size_t i = 0; i < f; i++) {
             for (size_t j = 0; j < f; j++) {
-                file << std::setw(10) << Sw[i * f_tilde + j] << " ";
+                file << std::setw(10) << Sb[i * f_tilde + j] << " ";
             }
             file << std::endl;
         }
         file << std::endl;
 
-        file << "=== S_B (" << f << "x" << f << ") ===" << std::endl;
+        // Intermediate results: X_bar_c and S_c per class
+        for (size_t c = 0; c < result.X_bar_c.size(); c++) {
+            size_t s_c = result.classCounts[c];
+
+            file << "=== X_bar_c (class " << c << ", first 10 rows, " << f << " cols) ===" << std::endl;
+            for (size_t row = 0; row < 10 && row < s_c; row++) {
+                for (size_t col = 0; col < f; col++) {
+                    file << std::setw(10) << result.X_bar_c[c][row * f_tilde + col] << " ";
+                }
+                file << std::endl;
+            }
+            file << std::endl;
+
+            file << "=== S_c (class " << c << " scatter, " << f << "x" << f << ") ===" << std::endl;
+            for (size_t i = 0; i < f; i++) {
+                for (size_t j = 0; j < f; j++) {
+                    file << std::setw(10) << result.S_c[c][i * f_tilde + j] << " ";
+                }
+                file << std::endl;
+            }
+            file << std::endl;
+        }
+
+        file << "=== S_W (" << f << "x" << f << ") ===" << std::endl;
         for (size_t i = 0; i < f; i++) {
             for (size_t j = 0; j < f; j++) {
-                file << std::setw(10) << Sb[i * f_tilde + j] << " ";
+                file << std::setw(10) << Sw[i * f_tilde + j] << " ";
             }
             file << std::endl;
         }

@@ -353,9 +353,10 @@ public:
     }
 
     // Encode dataset into CKKS-friendly vectors
-    // Each sample occupies paddedFeatures slots (one row)
-    // Total vector length: paddedSamples * paddedFeatures
-    static EncodedData encode(const LDADataset& dataset) {
+    // For JKLS18 256×256 matrix multiplication:
+    // Each sample occupies largeDim (256) slots per row
+    // Total vector length: largeDim * largeDim = 65536
+    static EncodedData encode(const LDADataset& dataset, size_t largeDim = 256) {
         EncodedData encoded;
 
         size_t f_tilde = dataset.paddedFeatures;
@@ -366,29 +367,27 @@ public:
         encoded.paddedSamples = s_tilde;
         encoded.paddedSamplesPerClass = dataset.paddedSamplesPerClass;
 
-        // Encode all samples: length = s̃ * f̃
-        encoded.allSamples.resize(s_tilde * f_tilde, 0.0);
+        // Encode all samples as largeDim × largeDim matrix
+        // Each row has largeDim slots (features padded with zeros)
+        encoded.allSamples.resize(largeDim * largeDim, 0.0);
 
         for (size_t i = 0; i < dataset.numSamples; i++) {
             for (size_t j = 0; j < dataset.numFeatures; j++) {
-                encoded.allSamples[i * f_tilde + j] = dataset.samples[i][j];
+                encoded.allSamples[i * largeDim + j] = dataset.samples[i][j];
             }
-            // Remaining slots in the row are already 0 (padding)
         }
-        // Remaining rows are already 0 (padding)
 
-        // Encode per-class samples
+        // Encode per-class samples as largeDim × largeDim matrices
         encoded.classSamples.resize(numClasses);
 
         for (size_t c = 0; c < numClasses; c++) {
-            size_t s_tilde_c = dataset.paddedSamplesPerClass[c];
-            encoded.classSamples[c].resize(s_tilde_c * f_tilde, 0.0);
+            encoded.classSamples[c].resize(largeDim * largeDim, 0.0);
 
             size_t classIdx = 0;
             for (size_t i = 0; i < dataset.numSamples; i++) {
                 if (dataset.labels[i] == static_cast<int>(c)) {
                     for (size_t j = 0; j < dataset.numFeatures; j++) {
-                        encoded.classSamples[c][classIdx * f_tilde + j] = dataset.samples[i][j];
+                        encoded.classSamples[c][classIdx * largeDim + j] = dataset.samples[i][j];
                     }
                     classIdx++;
                 }

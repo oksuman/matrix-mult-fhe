@@ -274,17 +274,19 @@ int main(int argc, char* argv[]) {
     LDADataEncoder::normalizeFeatures(trainSet);
     LDADataEncoder::normalizeWithParams(testSet, trainSet);
 
-    // Encode (CKKS-style packing)
+    // Encode as 256×256 matrices for JKLS18
     std::cout << "\n--- Encoding Data ---" << std::endl;
-    auto encodedTrain = LDADataEncoder::encode(trainSet);
+    int largeDim = HD_MATRIX_DIM;  // 256
+    auto encodedTrain = LDADataEncoder::encode(trainSet, largeDim);
 
     std::cout << "Features: " << trainSet.numFeatures << " (padded: " << trainSet.paddedFeatures << ")" << std::endl;
-    std::cout << "Samples: " << trainSet.numSamples << " (padded: " << trainSet.paddedSamples << ")" << std::endl;
+    std::cout << "Samples: " << trainSet.numSamples << std::endl;
+    std::cout << "Encoding: " << largeDim << "x" << largeDim << " = " << largeDim * largeDim << " slots" << std::endl;
 
     // ========== Setup CKKS Encryption ==========
     std::cout << "\n--- Setting up CKKS Encryption ---" << std::endl;
 
-    int maxDim = HD_MATRIX_DIM;  // 256 for HD dataset
+    int maxDim = largeDim;  // 256 for HD dataset
     int multDepth;  // High depth for matrix operations + inversion
     uint32_t scalingModSize;
     uint32_t firstModSize;

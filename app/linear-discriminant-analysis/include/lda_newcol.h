@@ -262,7 +262,6 @@ public:
         LDAEncryptedResult result;
         size_t f = dataset.numFeatures;
         size_t f_tilde = dataset.paddedFeatures;
-        size_t s_tilde = dataset.paddedSamples;
         size_t numClasses = dataset.numClasses;
         int largeDim = HD_MATRIX_DIM;
 
@@ -274,8 +273,8 @@ public:
         if (verbose) {
             std::cout << "\n========== LDA Training (NewCol Encrypted) ==========" << std::endl;
             std::cout << "Features: " << f << " (padded: " << f_tilde << ")" << std::endl;
-            std::cout << "Samples: " << dataset.numSamples << " (padded: " << s_tilde << ")" << std::endl;
-            std::cout << "Matrix dimension for JKLS18: " << largeDim << "x" << largeDim << std::endl;
+            std::cout << "Samples: " << dataset.numSamples << std::endl;
+            std::cout << "Matrix dimension: " << largeDim << "x" << largeDim << std::endl;
             std::cout << "Bootstrapping: " << (m_useBootstrapping ? "enabled" : "disabled") << std::endl;
             std::cout << "Multiplicative depth: " << m_multDepth << std::endl;
         }
@@ -285,27 +284,45 @@ public:
         auto meanStart = high_resolution_clock::now();
 
         result.classMeansEncrypted.resize(numClasses);
-        std::vector<Ciphertext<DCRTPoly>> classMeanReplicated(numClasses);
+        std::vector<Ciphertext<DCRTPoly>> classMeanForSw(numClasses);
+        std::vector<Ciphertext<DCRTPoly>> classMeanForSb(numClasses);
 
         for (size_t c = 0; c < numClasses; c++) {
             size_t s_c = dataset.samplesPerClass[c];
-            size_t s_tilde_c = dataset.paddedSamplesPerClass[c];
 
-            classMeanReplicated[c] = eval_computeMean(classDataEncrypted[c], s_c, s_tilde_c, f_tilde);
-            result.classMeansEncrypted[c] = classMeanReplicated[c]->Clone();
+            // Mean for S_W: masked division (zeros in padding rows)
+            classMeanForSw[c] = eval_computeMeanForSw(classDataEncrypted[c], s_c, f, largeDim);
 
+            // Mean for S_B: scalar division, extract to f_tilde slots
+            classMeanForSb[c] = eval_computeMeanForSb(classDataEncrypted[c], s_c, f_tilde, largeDim);
+            result.classMeansEncrypted[c] = classMeanForSb[c]->Clone();
+
+            // Decrypt for plaintext inference
             Plaintext ptx;
-            m_cc->Decrypt(m_keyPair.secretKey, classMeanReplicated[c], &ptx);
+            m_cc->Decrypt(m_keyPair.secretKey, classMeanForSb[c], &ptx);
             std::vector<double> meanVec = ptx->GetRealPackedValue();
             result.classMeans[c] = std::vector<double>(meanVec.begin(), meanVec.begin() + f);
 
             if (verbose) {
-                debugPrintLevel("Class " + std::to_string(c) + " mean", classMeanReplicated[c]);
-                debugPrintVector("Class " + std::to_string(c) + " Mean", classMeanReplicated[c], f);
+                debugPrintLevel("Class " + std::to_string(c) + " mean (for S_W)", classMeanForSw[c]);
+                debugPrintVector("Class " + std::to_string(c) + " Mean (for S_B)", classMeanForSb[c], f);
+
+                std::cout << "  Mean replication check for S_W (rows 0,1,2):" << std::endl;
+                Plaintext ptxSw;
+                m_cc->Decrypt(m_keyPair.secretKey, classMeanForSw[c], &ptxSw);
+                std::vector<double> meanSwVals = ptxSw->GetRealPackedValue();
+                for (int row = 0; row < 3 && row < (int)s_c; row++) {
+                    std::cout << "    Row " << row << ": ";
+                    for (size_t j = 0; j < std::min(f, (size_t)5); j++) {
+                        std::cout << std::setprecision(4) << std::fixed << meanSwVals[row * largeDim + j] << " ";
+                    }
+                    std::cout << "..." << std::endl;
+                }
+                std::cout << std::flush;
             }
         }
 
-        // Compute global mean
+        // Compute global mean (weighted average of class means)
         result.globalMean.resize(f, 0.0);
         size_t totalSamples = 0;
         for (size_t c = 0; c < numClasses; c++) {
@@ -336,18 +353,34 @@ public:
         auto Sw = getZeroCiphertext(largeDim * largeDim);
 
         for (size_t c = 0; c < numClasses; c++) {
-            size_t s_tilde_c = dataset.paddedSamplesPerClass[c];
+            if (verbose) {
+                std::cout << "  Class " << c << ": computing X_bar = X - mu..." << std::endl;
+            }
 
-            auto meanRep = eval_replicateMean(classMeanReplicated[c], f_tilde, s_tilde_c * f_tilde);
-            auto X_bar_c = m_cc->EvalSub(classDataEncrypted[c], meanRep);
-            X_bar_c->SetSlots(largeDim * largeDim);
+            // X_bar_c = X_c - μ_c (both are 256×256, μ has zeros in padding rows)
+            auto X_bar_c = m_cc->EvalSub(classDataEncrypted[c], classMeanForSw[c]);
 
+            if (verbose) {
+                std::cout << "  X_bar_c computed. Level: " << X_bar_c->GetLevel() << std::endl;
+                debugPrint("X_bar_c (first 32 elements)", X_bar_c, 32);
+            }
+
+            // Compute X_bar_c^T
             auto X_bar_c_T = eval_transpose(X_bar_c, largeDim, largeDim * largeDim);
+
+            // S_c = X_bar_c^T * X_bar_c using JKLS18
+            if (verbose) {
+                std::cout << "  Computing X_bar_c^T * X_bar_c with JKLS18 (" << largeDim << "x" << largeDim << ")..." << std::endl << std::flush;
+            }
             auto S_c = eval_mult_JKLS18(X_bar_c_T, X_bar_c, largeDim);
 
             m_cc->EvalAddInPlace(Sw, S_c);
         }
 
+        // Rebatch S_W from 256×256 to 16×16
+        if (verbose) {
+            std::cout << "  Rebatching S_W from " << largeDim << "x" << largeDim << " to " << f_tilde << "x" << f_tilde << "..." << std::endl;
+        }
         auto Sw_rebatched = rebatchToFeatureSpace(Sw, largeDim, f_tilde);
 
         auto swEnd = high_resolution_clock::now();
@@ -364,7 +397,8 @@ public:
 
         auto Sb = getZeroCiphertext(f_tilde * f_tilde);
 
-        std::vector<double> globalMeanPadded(f_tilde, 0.0);
+        // Encrypt global mean (f_tilde * f_tilde slots for S_B computation)
+        std::vector<double> globalMeanPadded(f_tilde * f_tilde, 0.0);
         for (size_t i = 0; i < f; i++) {
             globalMeanPadded[i] = result.globalMean[i];
         }
@@ -372,9 +406,15 @@ public:
         result.globalMeanEncrypted = globalMeanEnc->Clone();
 
         for (size_t c = 0; c < numClasses; c++) {
-            auto diff = m_cc->EvalSub(classMeanReplicated[c], globalMeanEnc);
+            // diff = μ_c - μ (both are f_tilde * f_tilde slots)
+            auto diff = m_cc->EvalSub(classMeanForSb[c], globalMeanEnc);
+
+            // outer = diff * diff^T (16×16)
             auto outer = eval_outerProduct(diff, f, f_tilde);
+
+            // Scale by class size
             auto scaled = m_cc->EvalMult(outer, (double)dataset.samplesPerClass[c]);
+
             m_cc->EvalAddInPlace(Sb, scaled);
         }
 

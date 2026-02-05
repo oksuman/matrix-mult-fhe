@@ -10,10 +10,10 @@
 #include <openfhe.h>
 #include <iostream>
 #include <iomanip>
+#include <fstream>
 #include <chrono>
 #include <filesystem>
 #include <cmath>
-#include <set>
 
 using namespace lbcrypto;
 
@@ -35,46 +35,15 @@ std::string getDataDir() {
 }
 
 // Generate rotation indices needed for encrypted operations
+// Only power-of-2 rotations are needed since RotationComposer uses binary decomposition
 std::vector<int> generateRotationIndices(int maxDim) {
-    std::set<int> indices;
-
-    // Binary decomposition rotations
-    for (int i = 1; i <= maxDim * maxDim; i *= 2) {
-        indices.insert(i);
-        indices.insert(-i);
+    std::vector<int> rotations;
+    int batchSize = maxDim * maxDim;
+    for (int i = 1; i < batchSize; i *= 2) {
+        rotations.push_back(i);
+        rotations.push_back(-i);
     }
-
-    // Matrix transpose rotations
-    for (int d = 1; d <= maxDim; d *= 2) {
-        for (int k = 1; k < d; k++) {
-            indices.insert((d - 1) * k);
-            indices.insert(-(d - 1) * k);
-        }
-    }
-
-    // JKLS18 / AR24 specific rotations
-    for (int i = 0; i < maxDim; i++) {
-        indices.insert(i);
-        indices.insert(-i);
-        indices.insert(i * maxDim);
-        indices.insert(-i * maxDim);
-    }
-
-    // NewCol specific rotations
-    for (int i = 1; i <= maxDim; i++) {
-        for (int j = 0; j < maxDim; j++) {
-            indices.insert(i + j * maxDim);
-            indices.insert(-(i + j * maxDim));
-        }
-    }
-
-    // Folding sum rotations
-    for (int i = 1; i < maxDim; i *= 2) {
-        indices.insert(i * HD_PADDED_FEATURE);
-        indices.insert(-i * HD_PADDED_FEATURE);
-    }
-
-    return std::vector<int>(indices.begin(), indices.end());
+    return rotations;
 }
 
 // Encrypt dataset for training
@@ -162,7 +131,56 @@ double performInference(const LDAEncryptedResult& trainResult,
     return accuracy;
 }
 
-// Run encrypted LDA experiment
+void saveEncryptedResults(const std::string& filename,
+                          const LDAEncryptedResult& result,
+                          const LDADataset& dataset,
+                          double accuracy,
+                          const LDATimingResult& timings) {
+    std::ofstream file(filename);
+    if (!file.is_open()) return;
+
+    size_t f = dataset.numFeatures;
+    size_t f_tilde = dataset.paddedFeatures;
+
+    file << std::fixed << std::setprecision(6);
+
+    file << "=== Global Mean (len=" << f << ") ===" << std::endl;
+    for (size_t i = 0; i < f; i++) {
+        file << std::setw(10) << result.globalMean[i] << " ";
+    }
+    file << std::endl << std::endl;
+
+    for (size_t c = 0; c < result.classMeans.size(); c++) {
+        file << "=== Class " << c << " Mean (len=" << f << ") ===" << std::endl;
+        for (size_t i = 0; i < f; i++) {
+            file << std::setw(10) << result.classMeans[c][i] << " ";
+        }
+        file << std::endl << std::endl;
+    }
+
+    file << "=== S_W^{-1} (" << f << "x" << f << ") ===" << std::endl;
+    for (size_t i = 0; i < f; i++) {
+        for (size_t j = 0; j < f; j++) {
+            file << std::setw(10) << result.Sw_inv_decrypted[i * f_tilde + j] << " ";
+        }
+        file << std::endl;
+    }
+    file << std::endl;
+
+    file << "=== Accuracy ===" << std::endl;
+    file << accuracy << "%" << std::endl << std::endl;
+
+    file << "=== Timing ===" << std::endl;
+    file << "Mean computation: " << timings.meanComputation.count() << " s" << std::endl;
+    file << "S_W computation: " << timings.swComputation.count() << " s" << std::endl;
+    file << "S_B computation: " << timings.sbComputation.count() << " s" << std::endl;
+    file << "Matrix inversion: " << timings.inversionTime.count() << " s" << std::endl;
+    file << "Total: " << timings.totalTime.count() << " s" << std::endl;
+
+    file.close();
+    std::cout << "Results saved to: " << filename << std::endl;
+}
+
 template<typename LDAAlgorithm>
 void runEncryptedLDA(const std::string& algorithmName,
                      std::shared_ptr<Encryption> enc,
@@ -175,20 +193,20 @@ void runEncryptedLDA(const std::string& algorithmName,
                      int multDepth,
                      int inversionIterations,
                      bool useBootstrapping,
-                     bool verbose) {
+                     bool verbose,
+                     const std::string& outputFile = "") {
 
     std::cout << "\n" << std::string(60, '=') << std::endl;
     std::cout << "  LDA with " << algorithmName << " Matrix Inversion" << std::endl;
     std::cout << "  Bootstrapping: " << (useBootstrapping ? "ENABLED" : "DISABLED") << std::endl;
-    std::cout << std::string(60, '=') << std::endl;
+    std::cout << std::string(60, '=') << std::flush;
 
     LDAAlgorithm lda(enc, cc, keyPair, rotIndices, multDepth, useBootstrapping);
 
     LDATimingResult timings;
     auto result = lda.trainWithTimings(classDataEncrypted, trainSet, inversionIterations, timings, verbose);
 
-    // Perform inference on test set
-    std::cout << "\n--- Inference on Test Set ---" << std::endl;
+    std::cout << "\n--- Inference on Test Set ---" << std::endl << std::flush;
     double accuracy = performInference(result, testSet, verbose);
 
     std::cout << "\nTest Accuracy: " << std::setprecision(2) << std::fixed
@@ -200,19 +218,22 @@ void runEncryptedLDA(const std::string& algorithmName,
     std::cout << "S_W computation:    " << timings.swComputation.count() << " s" << std::endl;
     std::cout << "S_B computation:    " << timings.sbComputation.count() << " s" << std::endl;
     std::cout << "Matrix inversion:   " << timings.inversionTime.count() << " s" << std::endl;
-    std::cout << "Total training:     " << timings.totalTime.count() << " s" << std::endl;
+    std::cout << "Total training:     " << timings.totalTime.count() << std::endl << std::flush;
+
+    if (!outputFile.empty()) {
+        saveEncryptedResults(outputFile, result, trainSet, accuracy, timings);
+    }
 }
 
 int main(int argc, char* argv[]) {
-    bool verbose = true;
+    bool debugMode = true;
     bool useBootstrapping = true;
-    std::string algorithm = "both";  // "ar24", "newcol", or "both"
+    std::string algorithm = "both";
 
-    // Parse command line arguments
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
-        if (arg == "-q" || arg == "--quiet") {
-            verbose = false;
+        if (arg == "--benchmark") {
+            debugMode = false;
         } else if (arg == "--no-bootstrap") {
             useBootstrapping = false;
         } else if (arg == "--ar24") {
@@ -221,6 +242,9 @@ int main(int argc, char* argv[]) {
             algorithm = "newcol";
         }
     }
+
+    bool verbose = debugMode;
+    std::string outputFilePrefix = debugMode ? "encrypted_" : "";
 
     std::cout << "\n";
     std::cout << "###############################################################" << std::endl;
@@ -261,12 +285,18 @@ int main(int argc, char* argv[]) {
     std::cout << "\n--- Setting up CKKS Encryption ---" << std::endl;
 
     int maxDim = HD_MATRIX_DIM;  // 256 for HD dataset
-    int multDepth = 45;  // High depth for matrix operations + inversion
-    uint32_t scalingModSize = 50;
-    uint32_t firstModSize = 60;
+    int multDepth;  // High depth for matrix operations + inversion
+    uint32_t scalingModSize;
+    uint32_t firstModSize;
 
-    if (!useBootstrapping) {
-        multDepth = 30;  // Lower depth when not bootstrapping
+    if (!useBootstrapping) { // without bootstrapping
+        multDepth = 30; 
+        scalingModSize = 50;
+        firstModSize = 50;
+    }else { // with bootstrapping
+        multDepth = 29; 
+        scalingModSize = 59;
+        firstModSize = 60;
     }
 
     std::cout << "Max dimension: " << maxDim << std::endl;
@@ -300,40 +330,43 @@ int main(int argc, char* argv[]) {
     // Create encryption object for data encryption
     auto enc = std::make_shared<DebugEncryption>(cc, keyPair);
 
-    // Generate rotation keys
-    std::cout << "Generating rotation keys..." << std::endl;
+    std::cout << "Generating rotation keys..." << std::flush;
     cc->EvalRotateKeyGen(keyPair.secretKey, rotIndices);
+    std::cout << " Done." << std::endl;
 
     if (useBootstrapping) {
-        std::cout << "Setting up bootstrapping..." << std::endl;
+        std::cout << "Setting up bootstrapping..." << std::flush;
         std::vector<uint32_t> levelBudget = {4, 5};
         std::vector<uint32_t> bsgsDim = {0, 0};
         cc->EvalBootstrapSetup(levelBudget, bsgsDim, HD_PADDED_FEATURE * HD_PADDED_FEATURE);
+        std::cout << " Setup done. Generating keys..." << std::flush;
         cc->EvalBootstrapKeyGen(keyPair.secretKey, HD_PADDED_FEATURE * HD_PADDED_FEATURE);
+        std::cout << " Done." << std::endl;
     }
 
-    // ========== Encrypt Training Data ==========
-    std::cout << "\n--- Encrypting Training Data ---" << std::endl;
+    std::cout << "\n--- Encrypting Training Data ---" << std::flush;
     auto classDataEncrypted = encryptClassData(trainSet, encodedTrain, enc);
-    std::cout << "Encrypted " << classDataEncrypted.size() << " class datasets" << std::endl;
+    std::cout << " Encrypted " << classDataEncrypted.size() << " class datasets" << std::endl;
 
     // ========== Run Encrypted LDA ==========
-    int inversionIterations = 20;  // Schulz iterations for 16×16 matrix
+    int inversionIterations = 25;  // iterations for 16×16 matrix
 
     if (algorithm == "ar24" || algorithm == "both") {
+        std::string outFile = outputFilePrefix.empty() ? "" : outputFilePrefix + "ar24_results.txt";
         runEncryptedLDA<LDA_AR24>(
             "AR24",
             enc, cc, keyPair, rotIndices,
             classDataEncrypted, trainSet, testSet,
-            multDepth, inversionIterations, useBootstrapping, verbose);
+            multDepth, inversionIterations, useBootstrapping, verbose, outFile);
     }
 
     if (algorithm == "newcol" || algorithm == "both") {
+        std::string outFile = outputFilePrefix.empty() ? "" : outputFilePrefix + "newcol_results.txt";
         runEncryptedLDA<LDA_NewCol>(
             "NewCol",
             enc, cc, keyPair, rotIndices,
             classDataEncrypted, trainSet, testSet,
-            multDepth, inversionIterations, useBootstrapping, verbose);
+            multDepth, inversionIterations, useBootstrapping, verbose, outFile);
     }
 
     std::cout << "\n" << std::string(60, '=') << std::endl;

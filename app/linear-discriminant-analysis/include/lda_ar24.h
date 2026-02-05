@@ -109,7 +109,8 @@ public:
         : LDAEncryptedBase(enc, cc, keyPair, rotIndices, multDepth, useBootstrapping)
     {}
 
-    // AR24 matrix inversion using Schulz iteration
+    bool m_verbose = false;
+
     Ciphertext<DCRTPoly> eval_inverse(const Ciphertext<DCRTPoly>& M, int d, int iterations) override {
         int s = std::min(d, (int)(m_cc->GetRingDimension() / 2 / d / d));
         s = std::max(1, s);
@@ -119,32 +120,34 @@ public:
         Plaintext pI = m_cc->MakeCKKSPackedPlaintext(vI, 1, 0, nullptr, d * d);
         Plaintext pI2 = m_cc->MakeCKKSPackedPlaintext(vI2, 1, 0, nullptr, d * d * s);
 
-        // Compute trace for initial scaling
         auto trace = eval_trace(M, d, d * d);
 
-        // For HD dataset with 16×16 matrix, trace is sum of diagonal elements
-        // Estimate range for EvalDivide based on matrix properties
         int traceMin = (d * d) / 3 - d;
         int traceMax = (d * d) / 3 + d;
         auto trace_reciprocal = m_cc->EvalDivide(trace, traceMin, traceMax, 50);
 
-        // Y_0 = (1/trace) * I
         auto Y = m_cc->EvalMult(pI, trace_reciprocal);
-        // A_bar = I - M * Y_0 = I - M/trace
         auto A_bar = m_cc->EvalSub(pI, m_cc->EvalMultAndRelinearize(M, trace_reciprocal));
 
-        // Extend to s copies for AR24 multiplication
+        if (m_verbose) {
+            std::cout << "  [Inversion Init] Y level: " << Y->GetLevel()
+                      << ", A_bar level: " << A_bar->GetLevel() << std::endl;
+        }
+
         Y->SetSlots(d * d * s);
         A_bar->SetSlots(d * d * s);
         Y = clean(Y, d, s);
         A_bar = clean(A_bar, d, s);
 
-        // Schulz iteration: Y = Y * (I + A_bar), A_bar = A_bar^2
         for (int i = 0; i < iterations - 1; i++) {
             Y = eval_mult_AR24(Y, m_cc->EvalAdd(pI2, A_bar), d, s);
             A_bar = eval_mult_AR24(A_bar, A_bar, d, s);
 
             if (m_useBootstrapping && (int)Y->GetLevel() >= m_multDepth - 3) {
+                if (m_verbose) {
+                    std::cout << "  [Iter " << i << "] Bootstrapping triggered. Y level: "
+                              << Y->GetLevel() << std::endl;
+                }
                 A_bar->SetSlots(d * d);
                 A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
                 Y->SetSlots(d * d);
@@ -154,18 +157,37 @@ public:
                 A_bar = clean(A_bar, d, s);
                 Y->SetSlots(d * d * s);
                 Y = clean(Y, d, s);
+
+                if (m_verbose) {
+                    std::cout << "           After bootstrap. Y level: " << Y->GetLevel()
+                              << ", A_bar level: " << A_bar->GetLevel() << std::endl;
+                }
             } else {
                 A_bar = clean(A_bar, d, s);
                 Y = clean(Y, d, s);
             }
+
+            if (m_verbose && (i % 5 == 0 || i == iterations - 2)) {
+                std::cout << "  [Iter " << i << "] Y level: " << Y->GetLevel()
+                          << ", A_bar level: " << A_bar->GetLevel() << std::endl;
+            }
         }
 
-        // Final iteration
         Y = eval_mult_AR24(Y, m_cc->EvalAdd(pI2, A_bar), d, s);
         Y->SetSlots(d * d);
 
         if (m_useBootstrapping && (int)Y->GetLevel() >= m_multDepth - 3) {
+            if (m_verbose) {
+                std::cout << "  [Final] Bootstrapping. Y level before: " << Y->GetLevel() << std::endl;
+            }
             Y = m_cc->EvalBootstrap(Y, 2, 18);
+            if (m_verbose) {
+                std::cout << "  [Final] Y level after: " << Y->GetLevel() << std::endl;
+            }
+        }
+
+        if (m_verbose) {
+            std::cout << "  [Inversion Done] Final Y level: " << Y->GetLevel() << std::endl;
         }
 
         return Y;
@@ -192,12 +214,15 @@ public:
         result.classCounts = dataset.samplesPerClass;
         result.classMeans.resize(numClasses);
 
+        m_verbose = verbose;
+
         if (verbose) {
             std::cout << "\n========== LDA Training (AR24 Encrypted) ==========" << std::endl;
             std::cout << "Features: " << f << " (padded: " << f_tilde << ")" << std::endl;
             std::cout << "Samples: " << dataset.numSamples << " (padded: " << s_tilde << ")" << std::endl;
             std::cout << "Matrix dimension for JKLS18: " << largeDim << "x" << largeDim << std::endl;
             std::cout << "Bootstrapping: " << (m_useBootstrapping ? "enabled" : "disabled") << std::endl;
+            std::cout << "Multiplicative depth: " << m_multDepth << std::endl;
         }
 
         // ========== Step 1: Compute Class Means ==========
@@ -222,11 +247,8 @@ public:
             result.classMeans[c] = std::vector<double>(meanVec.begin(), meanVec.begin() + f);
 
             if (verbose) {
-                std::cout << "  Class " << c << " mean (first 5): ";
-                for (int i = 0; i < std::min(5, (int)f); i++) {
-                    std::cout << std::setprecision(4) << result.classMeans[c][i] << " ";
-                }
-                std::cout << std::endl;
+                debugPrintLevel("Class " + std::to_string(c) + " mean", classMeanReplicated[c]);
+                debugPrintVector("Class " + std::to_string(c) + " Mean", classMeanReplicated[c], f);
             }
         }
 
@@ -243,6 +265,14 @@ public:
         }
         for (size_t i = 0; i < f; i++) {
             result.globalMean[i] /= totalSamples;
+        }
+
+        if (verbose) {
+            std::cout << "=== Global Mean (len=" << f << ") ===" << std::endl;
+            for (size_t i = 0; i < f; i++) {
+                std::cout << std::setw(10) << std::setprecision(4) << std::fixed << result.globalMean[i] << " ";
+            }
+            std::cout << std::endl << std::endl << std::flush;
         }
 
         auto meanEnd = high_resolution_clock::now();
@@ -287,7 +317,7 @@ public:
 
         if (verbose) {
             std::cout << "  S_W computation complete" << std::endl;
-            debugPrint("S_W (first 16 elements)", Sw_rebatched, 16);
+            debugPrintMatrix("S_W", Sw_rebatched, f, f, f_tilde);
         }
 
         // ========== Step 3: Compute S_B (Between-class scatter) ==========
@@ -324,7 +354,7 @@ public:
 
         if (verbose) {
             std::cout << "  S_B computation complete" << std::endl;
-            debugPrint("S_B (first 16 elements)", Sb, 16);
+            debugPrintMatrix("S_B", Sb, f, f, f_tilde);
         }
 
         // ========== Step 4: Compute S_W^{-1} ==========
@@ -338,7 +368,7 @@ public:
 
         if (verbose) {
             std::cout << "  Matrix inversion complete (" << inversionIterations << " iterations)" << std::endl;
-            debugPrint("S_W^{-1} (first 16 elements)", result.Sw_inv, 16);
+            debugPrintMatrix("S_W^{-1}", result.Sw_inv, f, f, f_tilde);
         }
 
         // Decrypt S_W^{-1} for plaintext inference
@@ -356,6 +386,10 @@ public:
 
         result.Sw_inv_Sb = eval_mult_AR24(result.Sw_inv, Sb, f_tilde, invS);
         result.Sw_inv_Sb->SetSlots(f_tilde * f_tilde);
+
+        if (verbose) {
+            debugPrintMatrix("S_W^{-1} * S_B", result.Sw_inv_Sb, f, f, f_tilde);
+        }
 
         auto totalEnd = high_resolution_clock::now();
         timings.totalTime = totalEnd - totalStart;

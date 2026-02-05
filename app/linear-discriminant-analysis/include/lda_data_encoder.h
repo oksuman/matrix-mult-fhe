@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <random>
 #include <iostream>
+#include <iomanip>
 
 // Utility function to find nearest power of 2 >= n
 inline size_t nextPowerOf2(size_t n) {

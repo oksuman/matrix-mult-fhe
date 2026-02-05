@@ -27,7 +27,8 @@ void runLDA(const std::string& datasetName,
             const std::string& trainFile,
             const std::string& testFile,
             int inversionIterations,
-            bool verbose = true) {
+            bool verbose = true,
+            const std::string& outputFile = "") {
     std::cout << "\n" << std::string(60, '=') << std::endl;
     std::cout << "  LDA on " << datasetName << " Dataset" << std::endl;
     std::cout << std::string(60, '=') << std::endl;
@@ -61,7 +62,7 @@ void runLDA(const std::string& datasetName,
     std::cout << "\n--- Training LDA ---" << std::endl;
     auto trainStart = std::chrono::high_resolution_clock::now();
 
-    auto trainResult = LDATrainer::train(encodedTrain, trainSet, inversionIterations, verbose);
+    auto trainResult = LDATrainer::train(encodedTrain, trainSet, inversionIterations, verbose, outputFile);
 
     auto trainEnd = std::chrono::high_resolution_clock::now();
     auto trainDuration = std::chrono::duration_cast<std::chrono::milliseconds>(trainEnd - trainStart);
@@ -80,9 +81,15 @@ void runLDA(const std::string& datasetName,
 
 int main(int argc, char* argv[]) {
     bool verbose = true;
+    bool saveResults = false;
 
-    if (argc > 1 && std::string(argv[1]) == "-q") {
-        verbose = false;
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+        if (arg == "-q" || arg == "--quiet") {
+            verbose = false;
+        } else if (arg == "--save") {
+            saveResults = true;
+        }
     }
 
     std::cout << "\n";
@@ -96,21 +103,21 @@ int main(int argc, char* argv[]) {
     std::string dataDir = getDataDir();
     std::cout << "\nData directory: " << dataDir << std::endl;
 
-    // PID Dataset (Pima Indians Diabetes) - 8 features -> 8x8 matrix inversion
     runLDA("PID (Diabetes)",
            dataDir + "/diabetes.csv",
            dataDir + "/diabetes_train.csv",
            dataDir + "/diabetes_test.csv",
-           20,  // Schulz iterations for 8x8 matrix
-           verbose);
+           25,
+           verbose,
+           saveResults ? "plaintext_pid_results.txt" : "");
 
-    // HD Dataset (Heart Disease Cleveland) - 13 features -> 16x16 matrix inversion
     runLDA("HD (Heart Disease)",
            dataDir + "/Heart_disease_cleveland.csv",
            dataDir + "/heart_disease_train.csv",
            dataDir + "/heart_disease_test.csv",
-           25,  // Schulz iterations for 16x16 matrix
-           verbose);
+           25,
+           verbose,
+           saveResults ? "plaintext_hd_results.txt" : "");
 
     std::cout << "\n" << std::string(60, '=') << std::endl;
     std::cout << "  All experiments completed!" << std::endl;

@@ -5,6 +5,7 @@
 #include <vector>
 #include <cmath>
 #include <iostream>
+#include <fstream>
 #include <stdexcept>
 
 struct LDATrainResult {
@@ -20,8 +21,6 @@ struct LDATrainResult {
 
 class LDATrainer {
 private:
-    // Schulz iteration for matrix inversion: Y_{i+1} = Y_i * (2I - A * Y_i)
-    // Converges if spectral radius of (I - A*Y_0) < 1
     static std::vector<double> invertMatrix(const std::vector<double>& A,
                                             int d,
                                             int iterations = 20) {
@@ -62,11 +61,11 @@ private:
     }
 
 public:
-    // Train LDA using CKKS-friendly operations
     static LDATrainResult train(const EncodedData& encoded,
                                 const LDADataset& dataset,
                                 int inversionIterations = 20,
-                                bool verbose = false) {
+                                bool verbose = false,
+                                const std::string& outputFile = "") {
         LDATrainResult result;
 
         size_t f = dataset.numFeatures;
@@ -232,10 +231,13 @@ public:
             std::cout << "\n========== Training Complete ==========" << std::endl;
         }
 
+        if (!outputFile.empty()) {
+            saveResultsToFile(outputFile, result, Sw, Sb, f, f_tilde);
+        }
+
         return result;
     }
 
-    // Verify S_W inversion by computing S_W * S_W^{-1}
     static void verifyInversion(const std::vector<double>& Sw,
                                 const std::vector<double>& Sw_inv,
                                 int d) {
@@ -251,5 +253,73 @@ public:
             }
         }
         std::cout << "Max error from identity: " << maxError << std::endl << std::endl;
+    }
+
+    static void saveResultsToFile(const std::string& filename,
+                                  const LDATrainResult& result,
+                                  const std::vector<double>& Sw,
+                                  const std::vector<double>& Sb,
+                                  size_t f,
+                                  size_t f_tilde) {
+        std::ofstream file(filename);
+        if (!file.is_open()) {
+            std::cerr << "Failed to open file: " << filename << std::endl;
+            return;
+        }
+
+        file << std::fixed << std::setprecision(6);
+
+        file << "=== Global Mean (len=" << f << ") ===" << std::endl;
+        for (size_t i = 0; i < f; i++) {
+            file << std::setw(10) << result.globalMean[i] << " ";
+        }
+        file << std::endl << std::endl;
+
+        for (size_t c = 0; c < result.classMeans.size(); c++) {
+            file << "=== Class " << c << " Mean (len=" << f << ") ===" << std::endl;
+            for (size_t i = 0; i < f; i++) {
+                file << std::setw(10) << result.classMeans[c][i] << " ";
+            }
+            file << std::endl << std::endl;
+        }
+
+        file << "=== S_W (" << f << "x" << f << ") ===" << std::endl;
+        for (size_t i = 0; i < f; i++) {
+            for (size_t j = 0; j < f; j++) {
+                file << std::setw(10) << Sw[i * f_tilde + j] << " ";
+            }
+            file << std::endl;
+        }
+        file << std::endl;
+
+        file << "=== S_B (" << f << "x" << f << ") ===" << std::endl;
+        for (size_t i = 0; i < f; i++) {
+            for (size_t j = 0; j < f; j++) {
+                file << std::setw(10) << Sb[i * f_tilde + j] << " ";
+            }
+            file << std::endl;
+        }
+        file << std::endl;
+
+        file << "=== S_W^{-1} (" << f << "x" << f << ") ===" << std::endl;
+        for (size_t i = 0; i < f; i++) {
+            for (size_t j = 0; j < f; j++) {
+                file << std::setw(10) << result.Sw_inv[i * f + j] << " ";
+            }
+            file << std::endl;
+        }
+        file << std::endl;
+
+        file << "=== S_W^{-1} * S_B (" << f << "x" << f << ") ===" << std::endl;
+        for (size_t i = 0; i < f; i++) {
+            for (size_t j = 0; j < f; j++) {
+                file << std::setw(10) << result.Sw_inv_Sb[i * f + j] << " ";
+            }
+            file << std::endl;
+        }
+        file << std::endl;
+
+        file.close();
+        std::cout << "Results saved to: " << filename << std::endl;
     }
 };

@@ -250,6 +250,11 @@ protected:
 
     // ============ Debug: Decrypt and Print ============
 
+    void debugPrintLevel(const std::string& label, const Ciphertext<DCRTPoly>& cipher) {
+        std::cout << "[Level] " << label << ": " << cipher->GetLevel()
+                  << " / " << m_multDepth << std::endl << std::flush;
+    }
+
     void debugPrint(const std::string& label, const Ciphertext<DCRTPoly>& cipher, int numElements = 16) {
         Plaintext ptx;
         m_cc->Decrypt(m_keyPair.secretKey, cipher, &ptx);
@@ -261,6 +266,36 @@ protected:
             if ((i + 1) % 8 == 0) std::cout << std::endl;
         }
         std::cout << std::endl;
+    }
+
+    void debugPrintMatrix(const std::string& label, const Ciphertext<DCRTPoly>& cipher, int rows, int cols, int paddedCols) {
+        Plaintext ptx;
+        m_cc->Decrypt(m_keyPair.secretKey, cipher, &ptx);
+        std::vector<double> result = ptx->GetRealPackedValue();
+
+        std::cout << "=== " << label << " (" << rows << "x" << cols << ") [Level: "
+                  << cipher->GetLevel() << "/" << m_multDepth << "] ===" << std::endl;
+        for (int i = 0; i < rows; i++) {
+            for (int j = 0; j < cols; j++) {
+                std::cout << std::setw(10) << std::setprecision(4) << std::fixed
+                          << result[i * paddedCols + j] << " ";
+            }
+            std::cout << std::endl;
+        }
+        std::cout << std::endl << std::flush;
+    }
+
+    void debugPrintVector(const std::string& label, const Ciphertext<DCRTPoly>& cipher, int len) {
+        Plaintext ptx;
+        m_cc->Decrypt(m_keyPair.secretKey, cipher, &ptx);
+        std::vector<double> result = ptx->GetRealPackedValue();
+
+        std::cout << "=== " << label << " (len=" << len << ") [Level: "
+                  << cipher->GetLevel() << "/" << m_multDepth << "] ===" << std::endl;
+        for (int i = 0; i < len; i++) {
+            std::cout << std::setw(10) << std::setprecision(4) << std::fixed << result[i] << " ";
+        }
+        std::cout << std::endl << std::endl << std::flush;
     }
 
     // ============ JKLS18 Matrix Multiplication (256×256) ============

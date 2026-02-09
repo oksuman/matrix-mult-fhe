@@ -160,7 +160,7 @@ public:
         }
 
         if (verbose) {
-            PlaintextOps::printMatrix(Sb, f, f, "S_B");
+            PlaintextOps::printMatrix(Sb, f, f, "S_B", f_tilde);
         }
 
         // ========== Step 4: Compute S_W (Within-class scatter) ==========
@@ -224,7 +224,7 @@ public:
             result.S_c[c] = S_c;  // Store for debugging
 
             if (verbose) {
-                PlaintextOps::printMatrix(S_c, f, f, "    S_c (class " + std::to_string(c) + " scatter)");
+                PlaintextOps::printMatrix(S_c, f, f, "    S_c (class " + std::to_string(c) + " scatter)", f_tilde);
             }
 
             // Accumulate
@@ -236,7 +236,7 @@ public:
         }
 
         if (verbose) {
-            PlaintextOps::printMatrix(Sw, f, f, "S_W");
+            PlaintextOps::printMatrix(Sw, f, f, "S_W", f_tilde);
         }
 
         // ========== Step 5: Compute S_W^{-1} ==========

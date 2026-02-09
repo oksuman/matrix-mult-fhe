@@ -46,7 +46,8 @@ std::vector<int> generateRotationIndices(int maxDim) {
     return rotations;
 }
 
-// Encrypt dataset for training
+// Encrypt dataset for training (client-side)
+// Client sends: per-class encrypted samples + sample counts (plaintext)
 std::vector<Ciphertext<DCRTPoly>> encryptClassData(
     const LDADataset& dataset,
     const EncodedData& encoded,
@@ -236,17 +237,25 @@ void runEncryptedLDA(const std::string& algorithmName,
                      int inversionIterations,
                      bool useBootstrapping,
                      bool verbose,
+                     bool sbOnly = false,
                      const std::string& outputFile = "") {
 
     std::cout << "\n" << std::string(60, '=') << std::endl;
     std::cout << "  LDA with " << algorithmName << " Matrix Inversion" << std::endl;
     std::cout << "  Bootstrapping: " << (useBootstrapping ? "ENABLED" : "DISABLED") << std::endl;
+    if (sbOnly) std::cout << "  Mode: S_B ONLY (quick test)" << std::endl;
     std::cout << std::string(60, '=') << std::flush;
 
     LDAAlgorithm lda(enc, cc, keyPair, rotIndices, multDepth, useBootstrapping);
 
     LDATimingResult timings;
-    auto result = lda.trainWithTimings(classDataEncrypted, trainSet, inversionIterations, timings, verbose);
+    auto result = lda.trainWithTimings(classDataEncrypted, trainSet, inversionIterations, timings, verbose, sbOnly);
+
+    // Skip inference and full output in sbOnly mode
+    if (sbOnly) {
+        std::cout << "\n--- S_B Only Mode Complete ---" << std::endl;
+        return;
+    }
 
     std::cout << "\n--- Inference on Test Set ---" << std::endl << std::flush;
     double accuracy = performInference(result, testSet, verbose);
@@ -272,6 +281,8 @@ int main(int argc, char* argv[]) {
     bool useBootstrapping = true;
     std::string algorithm = "both";
 
+    bool sbOnly = false;  // Stop after S_B computation (for quick testing)
+
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         if (arg == "--benchmark") {
@@ -282,11 +293,17 @@ int main(int argc, char* argv[]) {
             algorithm = "ar24";
         } else if (arg == "--newcol") {
             algorithm = "newcol";
+        } else if (arg == "--sb-only") {
+            sbOnly = true;
         }
     }
 
     bool verbose = debugMode;
     std::string outputFilePrefix = debugMode ? "encrypted_" : "";
+
+    if (sbOnly) {
+        std::cout << "\n*** S_B ONLY MODE: Will stop after S_B computation ***\n" << std::endl;
+    }
 
     std::cout << "\n";
     std::cout << "###############################################################" << std::endl;
@@ -401,7 +418,7 @@ int main(int argc, char* argv[]) {
             "AR24",
             enc, cc, keyPair, rotIndices,
             classDataEncrypted, trainSet, testSet,
-            multDepth, inversionIterations, useBootstrapping, verbose, outFile);
+            multDepth, inversionIterations, useBootstrapping, verbose, sbOnly, outFile);
     }
 
     if (algorithm == "newcol" || algorithm == "both") {
@@ -410,7 +427,7 @@ int main(int argc, char* argv[]) {
             "NewCol",
             enc, cc, keyPair, rotIndices,
             classDataEncrypted, trainSet, testSet,
-            multDepth, inversionIterations, useBootstrapping, verbose, outFile);
+            multDepth, inversionIterations, useBootstrapping, verbose, sbOnly, outFile);
     }
 
     std::cout << "\n" << std::string(60, '=') << std::endl;

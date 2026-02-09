@@ -199,7 +199,8 @@ public:
         const LDADataset& dataset,
         int inversionIterations,
         LDATimingResult& timings,
-        bool verbose = false) override
+        bool verbose = false,
+        bool sbOnly = false) override
     {
         using namespace std::chrono;
         auto totalStart = high_resolution_clock::now();
@@ -267,21 +268,22 @@ public:
             }
         }
 
-        // Compute global mean (weighted average of class means)
-        result.globalMean.resize(f, 0.0);
-        size_t totalSamples = 0;
-        for (size_t c = 0; c < numClasses; c++) {
-            totalSamples += dataset.samplesPerClass[c];
-            for (size_t i = 0; i < f; i++) {
-                result.globalMean[i] += result.classMeans[c][i] * dataset.samplesPerClass[c];
-            }
-        }
-        for (size_t i = 0; i < f; i++) {
-            result.globalMean[i] /= totalSamples;
+        // Compute global mean from encrypted class means (weighted average)
+        // μ = (n_0 * μ_0 + n_1 * μ_1 + ...) / (n_0 + n_1 + ...)
+        // Both classMeanForSb[c] and globalMeanEnc are in 16-replicated form
+        auto globalMeanEnc = eval_computeGlobalMean(classMeanForSb, dataset.samplesPerClass, f_tilde);
+        result.globalMeanEncrypted = globalMeanEnc->Clone();
+
+        // Decrypt global mean for debugging/inference only
+        {
+            Plaintext ptxGlobal;
+            m_cc->Decrypt(m_keyPair.secretKey, globalMeanEnc, &ptxGlobal);
+            std::vector<double> globalMeanVec = ptxGlobal->GetRealPackedValue();
+            result.globalMean = std::vector<double>(globalMeanVec.begin(), globalMeanVec.begin() + f);
         }
 
         if (verbose) {
-            std::cout << "=== Global Mean (len=" << f << ") ===" << std::endl;
+            std::cout << "=== Global Mean (from class means, len=" << f << ") ===" << std::endl;
             for (size_t i = 0; i < f; i++) {
                 std::cout << std::setw(10) << std::setprecision(4) << std::fixed << result.globalMean[i] << " ";
             }
@@ -296,14 +298,6 @@ public:
         auto sbStart = high_resolution_clock::now();
 
         auto Sb = getZeroCiphertext(f_tilde * f_tilde);
-
-        // Encrypt global mean (f_tilde slots for S_B computation)
-        std::vector<double> globalMeanPadded(f_tilde * f_tilde, 0.0);
-        for (size_t i = 0; i < f; i++) {
-            globalMeanPadded[i] = result.globalMean[i];
-        }
-        auto globalMeanEnc = m_enc->encryptInput(globalMeanPadded);
-        result.globalMeanEncrypted = globalMeanEnc->Clone();
 
         for (size_t c = 0; c < numClasses; c++) {
             if (verbose) {
@@ -344,6 +338,18 @@ public:
         if (verbose) {
             std::cout << "  S_B computation complete" << std::endl;
             debugPrintMatrix("S_B", Sb, f, f, f_tilde);
+        }
+
+        // Early exit if sbOnly mode (for quick S_B testing)
+        if (sbOnly) {
+            auto totalEnd = high_resolution_clock::now();
+            timings.totalTime = totalEnd - totalStart;
+            if (verbose) {
+                std::cout << "\n*** S_B ONLY MODE: Stopping here ***" << std::endl;
+                std::cout << "Mean computation: " << timings.meanComputation.count() << " s" << std::endl;
+                std::cout << "S_B computation: " << timings.sbComputation.count() << " s" << std::endl;
+            }
+            return result;
         }
 
         // ========== Step 3: Compute S_W (Within-class scatter) ==========

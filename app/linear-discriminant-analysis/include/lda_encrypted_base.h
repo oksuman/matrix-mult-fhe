@@ -183,84 +183,74 @@ protected:
         return m_cc->EvalMult(summed, maskPtx);
     }
 
-    // Compute mean for S_B: scalar division, then rebatch from 256×256 to 16×16
-    // Result: mean vector in 16×16 format (256 slots), mean replicated in each row
+    // Compute mean for S_B: row-wise folding sum, then column-wise folding sum
+    // Result: 16-replicated form in f_tilde×f_tilde slots
+    // Each row of the 16×16 matrix has [m0, m1, ..., m_{f-1}, 0, ..., 0]
     Ciphertext<DCRTPoly> eval_computeMeanForSb(Ciphertext<DCRTPoly> X, int actualSamples,
                                                int f_tilde, int largeDim) {
+        // Step 1: Row-wise folding sum (sum replicated in all 256 rows)
         auto summed = eval_foldingSum(X, largeDim);
 
-        // Scalar division - mean is now replicated in all 256 rows
-        // Each row has [m0, m1, ..., m12, 0, ..., 0] (256 columns)
-        auto meanFull = m_cc->EvalMult(summed, 1.0 / actualSamples);
+        // Step 2: Divide by number of samples
+        // Now each of 256 rows has [m0, m1, ..., m_{f-1}, 0, ..., 0] (256 columns)
+        auto mean = m_cc->EvalMult(summed, 1.0 / actualSamples);
 
-        // Rebatch from 256-column rows to 16-column rows
-        // Same logic as rebatchToFeatureSpace
-        auto rebatched = meanFull->Clone();
-        for (int i = 0; i < f_tilde - 1; i++) {
-            m_cc->EvalAddInPlace(rebatched,
-                rot.rotate(meanFull, (largeDim - f_tilde) * (i + 1)));
+        // Step 3: Column-wise folding sum to replicate mean vector within each row
+        // Rotations: -f_tilde, -2*f_tilde, -4*f_tilde, -8*f_tilde (i.e., -16, -32, -64, -128)
+        // This creates [m0..m15] repeated 16 times per row (256 = 16 * 16)
+        for (int i = f_tilde; i < largeDim; i *= 2) {
+            m_cc->EvalAddInPlace(mean, rot.rotate(mean, -i));
         }
 
-        // Mask to keep only f_tilde × f_tilde elements
-        std::vector<double> msk(f_tilde * f_tilde, 1.0);
-        rebatched = m_cc->EvalMult(rebatched,
-            m_cc->MakeCKKSPackedPlaintext(msk, 1, 0, nullptr, largeDim * largeDim));
+        // Step 4: SetSlots to interpret as 16×16 matrix
+        // First 256 slots form a 16×16 matrix where each row is [m0, m1, ..., m15]
+        // This is the 16-replicated form
+        mean->SetSlots(f_tilde * f_tilde);
 
-        // Collapse remaining copies
-        int numIterations = (int)log2((double)(largeDim * largeDim) / (f_tilde * f_tilde));
-        for (int i = 0; i < numIterations; i++) {
-            m_cc->EvalAddInPlace(rebatched,
-                rot.rotate(rebatched, -largeDim * (1 << i)));
+        return mean;
+    }
+
+    // Compute global mean from encrypted class means (weighted average)
+    // μ = (n_0 * μ_0 + n_1 * μ_1 + ...) / (n_0 + n_1 + ...)
+    // All inputs and output are in 16-replicated form
+    Ciphertext<DCRTPoly> eval_computeGlobalMean(
+        const std::vector<Ciphertext<DCRTPoly>>& classMeans,
+        const std::vector<size_t>& classCounts,
+        int f_tilde) {
+
+        size_t totalSamples = 0;
+        for (auto n : classCounts) totalSamples += n;
+
+        // Weighted sum: sum_c (n_c * μ_c)
+        auto globalMean = m_cc->EvalMult(classMeans[0], (double)classCounts[0]);
+        for (size_t c = 1; c < classMeans.size(); c++) {
+            auto scaled = m_cc->EvalMult(classMeans[c], (double)classCounts[c]);
+            m_cc->EvalAddInPlace(globalMean, scaled);
         }
 
-        rebatched->SetSlots(f_tilde * f_tilde);
-        return rebatched;
+        // Divide by total samples
+        globalMean = m_cc->EvalMult(globalMean, 1.0 / totalSamples);
+        globalMean->SetSlots(f_tilde * f_tilde);
+
+        return globalMean;
     }
 
     // ============ Outer Product for S_B ============
-    // Compute (mu_c - mu)(mu_c - mu)^T
-    // Input: diff vector in first f_tilde slots (from eval_computeMeanForSb)
-    // Output: f_tilde × f_tilde matrix
+    // Compute (mu_c - mu)(mu_c - mu)^T using transpose + Hadamard product
+    // Input: diff in 16-replicated form (each row is [d0, d1, ..., d_{f-1}, 0, ..., 0])
+    // Output: f_tilde × f_tilde outer product matrix
+    //
+    // diff:   position (i, j) = d_j  (row-replicated: each row is the diff vector)
+    // diff^T: position (i, j) = d_i  (column-replicated: each column is the diff vector)
+    // diff * diff^T (Hadamard): position (i, j) = d_i * d_j  (outer product!)
 
     Ciphertext<DCRTPoly> eval_outerProduct(Ciphertext<DCRTPoly> diff, int actualF, int f_tilde) {
-        // diff is in f_tilde*f_tilde slots, with meaningful values in first f_tilde positions
-        // We need to compute diff * diff^T = f_tilde × f_tilde matrix
+        // diff is in 16-replicated form (f_tilde × f_tilde slots)
+        // Transpose to get column-replicated form
+        auto diff_T = eval_transpose(diff, f_tilde, f_tilde * f_tilde);
 
-        // Step 1: Create column vector
-        // Row i should have d_i replicated: [d_i, d_i, ..., d_i]
-        auto colVec = getZeroCiphertext(f_tilde * f_tilde);
-
-        for (int i = 0; i < actualF; i++) {
-            // Extract d_i
-            std::vector<double> extractMask(f_tilde * f_tilde, 0.0);
-            extractMask[i] = 1.0;
-            auto di = m_cc->EvalMult(diff,
-                m_cc->MakeCKKSPackedPlaintext(extractMask, 1, 0, nullptr, f_tilde * f_tilde));
-
-            // Replicate d_i to fill f_tilde slots
-            for (int j = 1; j < f_tilde; j *= 2) {
-                m_cc->EvalAddInPlace(di, rot.rotate(di, -j));
-            }
-
-            // Position at row i (mask to row i only)
-            std::vector<double> rowMask(f_tilde * f_tilde, 0.0);
-            for (int j = 0; j < f_tilde; j++) {
-                rowMask[i * f_tilde + j] = 1.0;
-            }
-            auto diRow = m_cc->EvalMult(di,
-                m_cc->MakeCKKSPackedPlaintext(rowMask, 1, 0, nullptr, f_tilde * f_tilde));
-            m_cc->EvalAddInPlace(colVec, diRow);
-        }
-
-        // Step 2: Create row vector (diff replicated f_tilde times)
-        // [d0, d1, ..., d_{f-1}, 0, ..., 0, d0, d1, ..., d_{f-1}, 0, ..., 0, ...]
-        auto rowVec = diff->Clone();
-        for (int i = 1; i < f_tilde; i *= 2) {
-            m_cc->EvalAddInPlace(rowVec, rot.rotate(rowVec, -i * f_tilde));
-        }
-
-        // Step 3: Element-wise multiply to get outer product
-        return m_cc->EvalMultAndRelinearize(colVec, rowVec);
+        // Hadamard product gives outer product
+        return m_cc->EvalMultAndRelinearize(diff, diff_T);
     }
 
     // ============ Debug: Decrypt and Print ============
@@ -369,30 +359,54 @@ protected:
 
     Ciphertext<DCRTPoly> rebatchToFeatureSpace(Ciphertext<DCRTPoly> M,
                                                int largeDim, int f_tilde) {
-        // M is largeDim×largeDim (e.g., 256×256), we want f_tilde×f_tilde (e.g., 16×16)
-        // The actual data is in the top-left corner but rows are spaced largeDim apart
+        // ============================================================
+        // Rebatch: Extract f̃×f̃ matrix from largeDim×largeDim space
+        // ============================================================
+        // Input: M is largeDim×largeDim (e.g., 256×256 = 65536 slots)
+        //        Actual data is in top-left f_tilde×f_tilde (e.g., 16×16)
+        //        Row i is at position i*largeDim (stride = largeDim)
+        //
+        // Output: f̃×f̃ matrix replicated s times for AR24 algorithm
+        //         Total slots = f̃² × s (e.g., 256 × 16 = 4096)
+        //
+        // Steps:
+        //   1. Row folding: change stride from largeDim to f_tilde
+        //   2. Masking: keep only first f̃² slots
+        //   3. Replication: copy matrix s times for AR24
+        // ============================================================
 
-        // Step 1: Shift rows to be contiguous
-        // Row i of result is at position i*largeDim in M, needs to be at position i*f_tilde
+        int gap = largeDim - f_tilde;  // 256 - 16 = 240
+
+        // Compute replication count s for AR24 algorithm
+        int ringDim = m_cc->GetRingDimension();
+        int s = std::min(f_tilde, ringDim / 2 / f_tilde / f_tilde);
+        s = std::max(1, s);  // At least 1
+        int num_slots = f_tilde * f_tilde * s;  // 16 * 16 * 16 = 4096
+
+        // Step 1: Log-depth row folding (log2(f_tilde) = 4 rotations)
+        // Rotation amounts: gap, 2*gap, 4*gap, 8*gap = 240, 480, 960, 1920
+        // After folding: rows 0-15 are contiguous in positions 0-255
         auto rebatched = M->Clone();
-        for (int i = 0; i < f_tilde - 1; i++) {
-            m_cc->EvalAddInPlace(rebatched,
-                rot.rotate(M, (largeDim - f_tilde) * (i + 1)));
+        for (int step = 1; step < f_tilde; step *= 2) {
+            auto rotated = rot.rotate(rebatched, step * gap);
+            m_cc->EvalAddInPlace(rebatched, rotated);
         }
 
-        // Step 2: Mask to keep only f_tilde×f_tilde elements
+        // Step 2: Mask to keep only f̃×f̃ elements (positions 0 to f̃²-1)
+        // This removes garbage/duplicates in positions f̃² and beyond
         std::vector<double> msk(f_tilde * f_tilde, 1.0);
         rebatched = m_cc->EvalMult(rebatched,
             m_cc->MakeCKKSPackedPlaintext(msk, 1, 0, nullptr, largeDim * largeDim));
 
-        // Step 3: Collapse remaining copies using log2 additions
-        int numIterations = (int)log2((double)(largeDim * largeDim) / (f_tilde * f_tilde));
-        for (int i = 0; i < numIterations; i++) {
-            m_cc->EvalAddInPlace(rebatched,
-                rot.rotate(rebatched, -largeDim * (1 << i)));
+        // Step 3: Replicate matrix s times for AR24 algorithm
+        // Rotation amounts: -f̃², -2f̃², -4f̃², -8f̃² = -256, -512, -1024, -2048
+        // After replication: s copies of f̃×f̃ matrix in positions 0 to s×f̃²-1
+        for (int i = 1; i < s; i *= 2) {
+            auto rotated = rot.rotate(rebatched, -i * f_tilde * f_tilde);
+            m_cc->EvalAddInPlace(rebatched, rotated);
         }
 
-        rebatched->SetSlots(f_tilde * f_tilde);
+        rebatched->SetSlots(num_slots);
         return rebatched;
     }
 
@@ -418,12 +432,16 @@ public:
     virtual Ciphertext<DCRTPoly> eval_inverse(const Ciphertext<DCRTPoly>& M, int d, int iterations) = 0;
 
     // Main training function (common workflow)
+    // Client sends: classDataEncrypted (per-class) + sample counts (plaintext)
+    // Global mean is computed from class means (weighted average)
+    // sbOnly: if true, stop after S_B computation (for quick testing)
     virtual LDAEncryptedResult trainWithTimings(
         const std::vector<Ciphertext<DCRTPoly>>& classDataEncrypted,
         const LDADataset& dataset,
         int inversionIterations,
         LDATimingResult& timings,
-        bool verbose = false) = 0;
+        bool verbose = false,
+        bool sbOnly = false) = 0;
 
     void setBootstrapping(bool enable) { m_useBootstrapping = enable; }
     bool getBootstrapping() const { return m_useBootstrapping; }

@@ -260,11 +260,13 @@ public:
     }
 
     // Debug: print matrix
-    static void printMatrix(const std::vector<double>& M, int rows, int cols, const std::string& name) {
+    // stride: row stride in storage (if 0, use cols as stride)
+    static void printMatrix(const std::vector<double>& M, int rows, int cols, const std::string& name, int stride = 0) {
+        if (stride == 0) stride = cols;
         std::cout << "=== " << name << " (" << rows << "x" << cols << ") ===" << std::endl;
         for (int i = 0; i < rows; i++) {
             for (int j = 0; j < cols; j++) {
-                std::cout << std::setw(10) << std::setprecision(4) << std::fixed << M[i * cols + j] << " ";
+                std::cout << std::setw(10) << std::setprecision(4) << std::fixed << M[i * stride + j] << " ";
             }
             std::cout << std::endl;
         }

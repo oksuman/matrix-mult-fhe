@@ -4,6 +4,7 @@
 #include <iostream>
 #include <chrono>
 #include <filesystem>
+#include <sstream>
 
 // Get the data directory path
 std::string getDataDir() {
@@ -28,7 +29,8 @@ void runLDA(const std::string& datasetName,
             const std::string& testFile,
             int inversionIterations,
             bool verbose = true,
-            const std::string& outputFile = "") {
+            const std::string& outputFile = "",
+            int maxTrainSamples = 0) {
     std::cout << "\n" << std::string(60, '=') << std::endl;
     std::cout << "  LDA on " << datasetName << " Dataset" << std::endl;
     std::cout << std::string(60, '=') << std::endl;
@@ -38,6 +40,12 @@ void runLDA(const std::string& datasetName,
     std::cout << "\n--- Data Loading ---" << std::endl;
     LDADataEncoder::loadOrCreateSplit(rawDataFile, trainFile, testFile,
                                       trainSet, testSet, 0.8, 42);
+
+    // Limit training samples if specified
+    if (maxTrainSamples > 0 && trainSet.numSamples > static_cast<size_t>(maxTrainSamples)) {
+        std::cout << "Limiting training samples to " << maxTrainSamples << std::endl;
+        LDADataEncoder::limitSamples(trainSet, maxTrainSamples);
+    }
 
     LDADataEncoder::printDatasetInfo(trainSet, "Training Set");
     LDADataEncoder::printDatasetInfo(testSet, "Test Set");
@@ -77,11 +85,25 @@ void runLDA(const std::string& datasetName,
 
     // Print results
     LDAInference::printConfusionMatrix(inferResult, testSet);
+
+    // Save results to file (after inference so we have accuracy)
+    if (!outputFile.empty()) {
+        double accuracy = inferResult.accuracy * 100.0;
+        double precision = inferResult.precision * 100.0;
+        double recall = inferResult.recall * 100.0;
+        double f1 = inferResult.f1 * 100.0;
+        LDATrainer::saveResultsToFile(outputFile, trainResult,
+                                       trainResult.Sw, trainResult.Sb,
+                                       trainResult.matrixDim, trainResult.paddedDim,
+                                       accuracy, inferResult.correctCount, inferResult.totalCount,
+                                       precision, recall, f1, trainSet.numSamples);
+    }
 }
 
 int main(int argc, char* argv[]) {
     bool verbose = true;
     bool saveResults = true;  // Save results by default
+    std::vector<int> trainSizes = {0};  // 0 means use all available samples
 
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
@@ -89,6 +111,15 @@ int main(int argc, char* argv[]) {
             verbose = false;
         } else if (arg == "--no-save") {
             saveResults = false;
+        } else if (arg == "--train-samples" && i + 1 < argc) {
+            trainSizes.clear();
+            std::string sizes = argv[++i];
+            // Parse comma-separated list: e.g., "256,128,64"
+            std::stringstream ss(sizes);
+            std::string token;
+            while (std::getline(ss, token, ',')) {
+                trainSizes.push_back(std::stoi(token));
+            }
         }
     }
 
@@ -103,21 +134,27 @@ int main(int argc, char* argv[]) {
     std::string dataDir = getDataDir();
     std::cout << "\nData directory: " << dataDir << std::endl;
 
-    runLDA("PID (Diabetes)",
-           dataDir + "/diabetes.csv",
-           dataDir + "/diabetes_train.csv",
-           dataDir + "/diabetes_test.csv",
-           25,
-           verbose,
-           saveResults ? "plaintext_pid_results.txt" : "");
+    for (int trainSize : trainSizes) {
+        std::string suffix = (trainSize > 0) ? "_n" + std::to_string(trainSize) : "";
 
-    runLDA("HD (Heart Disease)",
-           dataDir + "/Heart_disease_cleveland.csv",
-           dataDir + "/heart_disease_train.csv",
-           dataDir + "/heart_disease_test.csv",
-           25,
-           verbose,
-           saveResults ? "plaintext_hd_results.txt" : "");
+        runLDA("PID (Diabetes)" + (trainSize > 0 ? " [n=" + std::to_string(trainSize) + "]" : ""),
+               dataDir + "/diabetes.csv",
+               dataDir + "/diabetes_train.csv",
+               dataDir + "/diabetes_test.csv",
+               25,
+               verbose,
+               saveResults ? "plaintext_pid_results" + suffix + ".txt" : "",
+               trainSize);
+
+        runLDA("HD (Heart Disease)" + (trainSize > 0 ? " [n=" + std::to_string(trainSize) + "]" : ""),
+               dataDir + "/Heart_disease_cleveland.csv",
+               dataDir + "/heart_disease_train.csv",
+               dataDir + "/heart_disease_test.csv",
+               25,
+               verbose,
+               saveResults ? "plaintext_hd_results" + suffix + ".txt" : "",
+               trainSize);
+    }
 
     std::cout << "\n" << std::string(60, '=') << std::endl;
     std::cout << "  All experiments completed!" << std::endl;

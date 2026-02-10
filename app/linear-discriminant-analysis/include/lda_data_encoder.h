@@ -43,6 +43,8 @@ struct LDADataset {
     // Normalization parameters (for inference)
     std::vector<double> featureMin;
     std::vector<double> featureMax;
+    std::vector<double> featureMean;  // Z-score mean
+    std::vector<double> featureStd;   // Z-score std
 };
 
 struct EncodedData {
@@ -294,29 +296,38 @@ public:
         testSet.featureMax.resize(numFeatures);
     }
 
-    // Normalize features to [-1, 1] range per feature
+    // Normalize features using Z-score (mean=0, std=1)
+    // This provides tighter bound for trace(S_W): α_upper = N * d
     static void normalizeFeatures(LDADataset& dataset) {
         size_t numFeatures = dataset.numFeatures;
         size_t numSamples = dataset.numSamples;
 
-        // Find min/max for each feature
+        // Compute mean and std for each feature
+        dataset.featureMean.resize(numFeatures);
+        dataset.featureStd.resize(numFeatures);
+
         for (size_t f = 0; f < numFeatures; f++) {
-            double minVal = dataset.samples[0][f];
-            double maxVal = dataset.samples[0][f];
-
-            for (size_t s = 1; s < numSamples; s++) {
-                minVal = std::min(minVal, dataset.samples[s][f]);
-                maxVal = std::max(maxVal, dataset.samples[s][f]);
+            // Compute mean
+            double sum = 0.0;
+            for (size_t s = 0; s < numSamples; s++) {
+                sum += dataset.samples[s][f];
             }
+            double mean = sum / numSamples;
+            dataset.featureMean[f] = mean;
 
-            dataset.featureMin[f] = minVal;
-            dataset.featureMax[f] = maxVal;
+            // Compute std
+            double sumSq = 0.0;
+            for (size_t s = 0; s < numSamples; s++) {
+                double diff = dataset.samples[s][f] - mean;
+                sumSq += diff * diff;
+            }
+            double std = std::sqrt(sumSq / numSamples);
+            dataset.featureStd[f] = std;
 
-            // Normalize to [-1, 1]
-            double range = maxVal - minVal;
-            if (range > 1e-10) {
+            // Z-score normalization
+            if (std > 1e-10) {
                 for (size_t s = 0; s < numSamples; s++) {
-                    dataset.samples[s][f] = 2.0 * (dataset.samples[s][f] - minVal) / range - 1.0;
+                    dataset.samples[s][f] = (dataset.samples[s][f] - mean) / std;
                 }
             } else {
                 // Constant feature, set to 0
@@ -327,22 +338,21 @@ public:
         }
     }
 
-    // Normalize test set using train set's min/max
+    // Normalize test set using train set's mean/std (Z-score)
     static void normalizeWithParams(LDADataset& testSet, const LDADataset& trainSet) {
         size_t numFeatures = testSet.numFeatures;
         size_t numSamples = testSet.numSamples;
 
-        testSet.featureMin = trainSet.featureMin;
-        testSet.featureMax = trainSet.featureMax;
+        testSet.featureMean = trainSet.featureMean;
+        testSet.featureStd = trainSet.featureStd;
 
         for (size_t f = 0; f < numFeatures; f++) {
-            double minVal = trainSet.featureMin[f];
-            double maxVal = trainSet.featureMax[f];
-            double range = maxVal - minVal;
+            double mean = trainSet.featureMean[f];
+            double std = trainSet.featureStd[f];
 
-            if (range > 1e-10) {
+            if (std > 1e-10) {
                 for (size_t s = 0; s < numSamples; s++) {
-                    testSet.samples[s][f] = 2.0 * (testSet.samples[s][f] - minVal) / range - 1.0;
+                    testSet.samples[s][f] = (testSet.samples[s][f] - mean) / std;
                 }
             } else {
                 for (size_t s = 0; s < numSamples; s++) {
@@ -438,6 +448,54 @@ public:
         }
 
         return encoded;
+    }
+
+    // Limit training samples (maintains class proportions approximately)
+    static void limitSamples(LDADataset& dataset, size_t maxSamples) {
+        if (dataset.numSamples <= maxSamples) return;
+
+        // Calculate proportional samples per class
+        std::vector<size_t> newSamplesPerClass(dataset.numClasses);
+        size_t remaining = maxSamples;
+
+        for (size_t c = 0; c < dataset.numClasses; c++) {
+            double proportion = static_cast<double>(dataset.samplesPerClass[c]) / dataset.numSamples;
+            newSamplesPerClass[c] = static_cast<size_t>(maxSamples * proportion);
+            remaining -= newSamplesPerClass[c];
+        }
+
+        // Distribute remaining samples
+        for (size_t c = 0; c < dataset.numClasses && remaining > 0; c++) {
+            if (newSamplesPerClass[c] < dataset.samplesPerClass[c]) {
+                newSamplesPerClass[c]++;
+                remaining--;
+            }
+        }
+
+        // Build new dataset with limited samples
+        std::vector<std::vector<double>> newSamples;
+        std::vector<int> newLabels;
+        std::vector<size_t> currentPerClass(dataset.numClasses, 0);
+
+        for (size_t i = 0; i < dataset.numSamples; i++) {
+            int c = dataset.labels[i];
+            if (currentPerClass[c] < newSamplesPerClass[c]) {
+                newSamples.push_back(dataset.samples[i]);
+                newLabels.push_back(c);
+                currentPerClass[c]++;
+            }
+        }
+
+        dataset.samples = newSamples;
+        dataset.labels = newLabels;
+        dataset.numSamples = newSamples.size();
+        dataset.samplesPerClass = std::vector<size_t>(newSamplesPerClass.begin(), newSamplesPerClass.end());
+
+        // Recalculate padded dimensions
+        dataset.paddedSamples = nextPowerOf2(dataset.numSamples);
+        for (size_t c = 0; c < dataset.numClasses; c++) {
+            dataset.paddedSamplesPerClass[c] = nextPowerOf2(dataset.samplesPerClass[c]);
+        }
     }
 
     // Debug print

@@ -280,6 +280,7 @@ int main(int argc, char* argv[]) {
     bool debugMode = true;
     bool useBootstrapping = true;
     std::string algorithm = "both";
+    int maxTrainSamples = 0;  // 0 means use all samples
 
     bool sbOnly = false;  // Stop after S_B computation (for quick testing)
 
@@ -295,6 +296,8 @@ int main(int argc, char* argv[]) {
             algorithm = "newcol";
         } else if (arg == "--sb-only") {
             sbOnly = true;
+        } else if (arg == "--train-samples" && i + 1 < argc) {
+            maxTrainSamples = std::stoi(argv[++i]);
         }
     }
 
@@ -326,6 +329,12 @@ int main(int argc, char* argv[]) {
         dataDir + "/heart_disease_test.csv",
         trainSet, testSet, 0.8, 42);
 
+    // Limit training samples if specified
+    if (maxTrainSamples > 0) {
+        std::cout << "Limiting training samples to " << maxTrainSamples << std::endl;
+        LDADataEncoder::limitSamples(trainSet, maxTrainSamples);
+    }
+
     LDADataEncoder::printDatasetInfo(trainSet, "Training Set");
     LDADataEncoder::printDatasetInfo(testSet, "Test Set");
 
@@ -333,9 +342,9 @@ int main(int argc, char* argv[]) {
     LDADataEncoder::normalizeFeatures(trainSet);
     LDADataEncoder::normalizeWithParams(testSet, trainSet);
 
-    // Encode as 256×256 matrices for JKLS18
+    // Encode as matrices for JKLS18
     std::cout << "\n--- Encoding Data ---" << std::endl;
-    int largeDim = HD_MATRIX_DIM;  // 256
+    int largeDim = std::max(trainSet.paddedSamples, trainSet.paddedFeatures);
     auto encodedTrain = LDADataEncoder::encode(trainSet, largeDim);
 
     std::cout << "Features: " << trainSet.numFeatures << " (padded: " << trainSet.paddedFeatures << ")" << std::endl;
@@ -355,7 +364,7 @@ int main(int argc, char* argv[]) {
         scalingModSize = 50;
         firstModSize = 50;
     }else { // with bootstrapping
-        multDepth = 29; 
+        multDepth = 29;
         scalingModSize = 59;
         firstModSize = 60;
     }

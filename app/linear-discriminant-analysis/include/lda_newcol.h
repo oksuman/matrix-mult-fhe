@@ -173,7 +173,34 @@ public:
 
     bool m_verbose = false;
 
-    Ciphertext<DCRTPoly> eval_inverse(const Ciphertext<DCRTPoly>& M, int d, int iterations) override {
+    // Scalar inverse using power series: computes 1/t given encrypted t and upper_bound u >= t
+    // Algorithm: x = 1/u, t_bar = 1 - t/u, iterate x = x*(1+t_bar), t_bar = t_bar^2
+    Ciphertext<DCRTPoly> eval_scalar_inverse(const Ciphertext<DCRTPoly>& t, double upperBound, int iterations) {
+        // x_0 = 1/upperBound (plaintext scalar replicated)
+        double x0 = 1.0 / upperBound;
+        auto x = m_cc->Encrypt(m_keyPair.publicKey,
+            m_cc->MakeCKKSPackedPlaintext(std::vector<double>(1, x0)));
+
+        // t_bar = 1 - t/upperBound
+        auto t_bar = m_cc->EvalSub(1.0, m_cc->EvalMult(t, x0));
+
+        if (m_verbose) {
+            std::cout << "  [Scalar Inv] upper_bound = " << upperBound << ", x0 = " << x0 << std::endl;
+        }
+
+        for (int i = 0; i < iterations; i++) {
+            // x = x * (1 + t_bar)
+            x = m_cc->EvalMult(x, m_cc->EvalAdd(t_bar, 1.0));
+            // t_bar = t_bar * t_bar
+            t_bar = m_cc->EvalMult(t_bar, t_bar);
+        }
+
+        return x;
+    }
+
+    // Matrix inversion with actualDim specifying actual matrix size (rest is padding)
+    // traceUpperBound = N * d for Z-score normalization
+    Ciphertext<DCRTPoly> eval_inverse_impl(const Ciphertext<DCRTPoly>& M, int d, int iterations, int actualDim, double traceUpperBound = 0) {
         int maxBatch = m_cc->GetRingDimension() / 2;
         int s = std::min(d, maxBatch / d / d);
         s = std::max(1, s);
@@ -189,17 +216,46 @@ public:
             np = 4;
         }
 
-        std::vector<double> vI = initializeIdentityMatrix(d);
+        // Identity matrix: 1s only at actual feature positions (0..actualDim-1), 0s at padding
+        std::vector<double> vI(d * d, 0.0);
+        for (int i = 0; i < actualDim; i++) {
+            vI[i * d + i] = 1.0;
+        }
         Plaintext pI = m_cc->MakeCKKSPackedPlaintext(vI, 1, 0, nullptr, d * d);
+        auto I_enc = m_cc->Encrypt(m_keyPair.publicKey, pI);
 
-        auto trace = eval_trace(M, d, d * d);
+        if (m_verbose && actualDim < d) {
+            std::cout << "  [Inversion] Identity: 1s at 0.." << actualDim-1 << ", 0s at " << actualDim << ".." << d-1 << std::endl;
+        }
 
-        int traceMin = (d * d) / 3 - d;
-        int traceMax = (d * d) / 3 + d;
-        auto trace_reciprocal = m_cc->EvalDivide(trace, traceMin, traceMax, 50);
+        // Compute trace(M) in encrypted form
+        auto traceEnc = eval_trace(M, d, d * d);
 
-        auto Y = m_cc->EvalMult(pI, trace_reciprocal);
-        auto A_bar = m_cc->EvalSub(pI, m_cc->EvalMultAndRelinearize(M, trace_reciprocal));
+        // Compute 1/trace using scalar power series (NO decryption)
+        // Use traceUpperBound as the upper bound for scalar inverse
+        if (traceUpperBound <= 0) {
+            // Default: use actualDim^2 as rough upper bound (shouldn't happen if called correctly)
+            traceUpperBound = actualDim * actualDim;
+        }
+
+        // Compute encrypted alpha = 1/trace using power series (3 iterations for scalar)
+        auto alphaEnc = eval_scalar_inverse(traceEnc, traceUpperBound, 3);
+
+        if (m_verbose) {
+            // For debugging: decrypt and show actual trace and alpha
+            Plaintext ptxTrace, ptxAlpha;
+            m_cc->Decrypt(m_keyPair.secretKey, traceEnc, &ptxTrace);
+            m_cc->Decrypt(m_keyPair.secretKey, alphaEnc, &ptxAlpha);
+            std::cout << "  [Inversion] trace(M) = " << ptxTrace->GetRealPackedValue()[0]
+                      << ", alpha = " << ptxAlpha->GetRealPackedValue()[0] << std::endl;
+        }
+
+        // Y_0 = alpha * I (encrypted), with I having zeros at padding positions
+        // Since alphaEnc is scalar replicated, EvalMult broadcasts it
+        auto Y = m_cc->EvalMult(I_enc, alphaEnc);
+
+        // A_bar = I - alpha * M (I has zeros at padding, so A_bar also has zeros there)
+        auto A_bar = m_cc->EvalSub(I_enc, m_cc->EvalMult(M, alphaEnc));
 
         if (m_verbose) {
             std::cout << "  [Inversion Init] Y level: " << Y->GetLevel()
@@ -229,6 +285,18 @@ public:
             }
         }
 
+        // Bootstrap before final multiplication if needed
+        if (m_useBootstrapping && (int)Y->GetLevel() >= m_multDepth - 2) {
+            if (m_verbose) {
+                std::cout << "  [Before Final] Bootstrapping. Y level: " << Y->GetLevel() << std::endl;
+            }
+            A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+            Y = m_cc->EvalBootstrap(Y, 2, 18);
+            if (m_verbose) {
+                std::cout << "           After bootstrap. Y level: " << Y->GetLevel() << std::endl;
+            }
+        }
+
         Y = eval_mult_NewCol(Y, m_cc->EvalAdd(pI, A_bar), s, B, ng, nb, np, d);
 
         if (m_useBootstrapping && (int)Y->GetLevel() >= m_multDepth - 2) {
@@ -248,14 +316,19 @@ public:
         return Y;
     }
 
-    // Main LDA training (same workflow as AR24, different inversion)
+    // Default eval_inverse uses full identity (for base class compatibility)
+    Ciphertext<DCRTPoly> eval_inverse(const Ciphertext<DCRTPoly>& M, int d, int iterations) override {
+        return eval_inverse_impl(M, d, iterations, d);
+    }
+
+    // Binary LDA training: w = S_W^{-1} * (μ_1 - μ_0)
     LDAEncryptedResult trainWithTimings(
         const std::vector<Ciphertext<DCRTPoly>>& classDataEncrypted,
         const LDADataset& dataset,
         int inversionIterations,
         LDATimingResult& timings,
         bool verbose = false,
-        bool sbOnly = false) override
+        bool /*sbOnly*/ = false) override
     {
         using namespace std::chrono;
         auto totalStart = high_resolution_clock::now();
@@ -264,7 +337,7 @@ public:
         size_t f = dataset.numFeatures;
         size_t f_tilde = dataset.paddedFeatures;
         size_t numClasses = dataset.numClasses;
-        int largeDim = HD_MATRIX_DIM;
+        int largeDim = std::max(dataset.paddedSamples, dataset.paddedFeatures);
 
         result.classCounts = dataset.samplesPerClass;
         result.classMeans.resize(numClasses);
@@ -286,7 +359,7 @@ public:
 
         result.classMeansEncrypted.resize(numClasses);
         std::vector<Ciphertext<DCRTPoly>> classMeanForSw(numClasses);
-        std::vector<Ciphertext<DCRTPoly>> classMeanForSb(numClasses);
+        std::vector<Ciphertext<DCRTPoly>> classMeanVec(numClasses);
 
         for (size_t c = 0; c < numClasses; c++) {
             size_t s_c = dataset.samplesPerClass[c];
@@ -294,19 +367,19 @@ public:
             // Mean for S_W: masked division (zeros in padding rows)
             classMeanForSw[c] = eval_computeMeanForSw(classDataEncrypted[c], s_c, f, largeDim);
 
-            // Mean for S_B: scalar division, extract to f_tilde slots
-            classMeanForSb[c] = eval_computeMeanForSb(classDataEncrypted[c], s_c, f_tilde, largeDim);
-            result.classMeansEncrypted[c] = classMeanForSb[c]->Clone();
+            // Mean vector: scalar division, extract to f_tilde slots
+            classMeanVec[c] = eval_computeMeanForSb(classDataEncrypted[c], s_c, f_tilde, largeDim);
+            result.classMeansEncrypted[c] = classMeanVec[c]->Clone();
 
             // Decrypt for plaintext inference
             Plaintext ptx;
-            m_cc->Decrypt(m_keyPair.secretKey, classMeanForSb[c], &ptx);
+            m_cc->Decrypt(m_keyPair.secretKey, classMeanVec[c], &ptx);
             std::vector<double> meanVec = ptx->GetRealPackedValue();
             result.classMeans[c] = std::vector<double>(meanVec.begin(), meanVec.begin() + f);
 
             if (verbose) {
                 debugPrintLevel("Class " + std::to_string(c) + " mean (for S_W)", classMeanForSw[c]);
-                debugPrintVector("Class " + std::to_string(c) + " Mean (for S_B)", classMeanForSb[c], f);
+                debugPrintVector("Class " + std::to_string(c) + " Mean", classMeanVec[c], f);
 
                 std::cout << "  Mean replication check for S_W (rows 0,1,2):" << std::endl;
                 Plaintext ptxSw;
@@ -325,8 +398,8 @@ public:
 
         // Compute global mean from encrypted class means (weighted average)
         // μ = (n_0 * μ_0 + n_1 * μ_1 + ...) / (n_0 + n_1 + ...)
-        // Both classMeanForSb[c] and globalMeanEnc are in 16-replicated form
-        auto globalMeanEnc = eval_computeGlobalMean(classMeanForSb, dataset.samplesPerClass, f_tilde);
+        // Both classMeanVec[c] and globalMeanEnc are in 16-replicated form
+        auto globalMeanEnc = eval_computeGlobalMean(classMeanVec, dataset.samplesPerClass, f_tilde);
         result.globalMeanEncrypted = globalMeanEnc->Clone();
 
         // Decrypt global mean for debugging/inference only
@@ -348,67 +421,8 @@ public:
         auto meanEnd = high_resolution_clock::now();
         timings.meanComputation = meanEnd - meanStart;
 
-        // ========== Step 2: Compute S_B (Between-class scatter) ==========
-        if (verbose) std::cout << "[Step 2] Computing S_B (between-class scatter)..." << std::endl;
-        auto sbStart = high_resolution_clock::now();
-
-        auto Sb = getZeroCiphertext(f_tilde * f_tilde);
-
-        for (size_t c = 0; c < numClasses; c++) {
-            if (verbose) {
-                std::cout << "  Class " << c << ": computing (mu_c - mu) * (mu_c - mu)^T..." << std::endl;
-            }
-
-            // diff = μ_c - μ (both are f_tilde * f_tilde slots)
-            auto diff = m_cc->EvalSub(classMeanForSb[c], globalMeanEnc);
-
-            if (verbose) {
-                debugPrintVector("  (mu_" + std::to_string(c) + " - mu)", diff, f);
-            }
-
-            // outer = diff * diff^T (16×16)
-            auto outer = eval_outerProduct(diff, f, f_tilde);
-
-            // Scale by class size
-            auto scaled = m_cc->EvalMult(outer, (double)dataset.samplesPerClass[c]);
-
-            if (verbose) {
-                std::cout << "  Scaled by n_" << c << " = " << dataset.samplesPerClass[c] << std::endl;
-            }
-
-            m_cc->EvalAddInPlace(Sb, scaled);
-        }
-
-        auto sbEnd = high_resolution_clock::now();
-        timings.sbComputation = sbEnd - sbStart;
-
-        // Decrypt S_B for debugging
-        {
-            Plaintext ptxSb;
-            m_cc->Decrypt(m_keyPair.secretKey, Sb, &ptxSb);
-            result.Sb_decrypted = ptxSb->GetRealPackedValue();
-            result.Sb_decrypted.resize(f_tilde * f_tilde);
-        }
-
-        if (verbose) {
-            std::cout << "  S_B computation complete" << std::endl;
-            debugPrintMatrix("S_B", Sb, f, f, f_tilde);
-        }
-
-        // Early exit if sbOnly mode (for quick S_B testing)
-        if (sbOnly) {
-            auto totalEnd = high_resolution_clock::now();
-            timings.totalTime = totalEnd - totalStart;
-            if (verbose) {
-                std::cout << "\n*** S_B ONLY MODE: Stopping here ***" << std::endl;
-                std::cout << "Mean computation: " << timings.meanComputation.count() << " s" << std::endl;
-                std::cout << "S_B computation: " << timings.sbComputation.count() << " s" << std::endl;
-            }
-            return result;
-        }
-
-        // ========== Step 3: Compute S_W (Within-class scatter) ==========
-        if (verbose) std::cout << "[Step 3] Computing S_W (within-class scatter)..." << std::endl;
+        // ========== Step 2: Compute S_W (Within-class scatter) ==========
+        if (verbose) std::cout << "[Step 2] Computing S_W (within-class scatter)..." << std::endl;
         auto swStart = high_resolution_clock::now();
 
         auto Sw = getZeroCiphertext(largeDim * largeDim);
@@ -535,11 +549,15 @@ public:
             debugPrintMatrix("S_W", Sw_rebatched, f, f, f_tilde);
         }
 
-        // ========== Step 4: Compute S_W^{-1} (NewCol) ==========
-        if (verbose) std::cout << "\n[Step 4] Computing S_W^{-1} (NewCol Schulz iteration)..." << std::endl;
+        // ========== Step 3: Compute S_W^{-1} ==========
+        if (verbose) std::cout << "\n[Step 3] Computing S_W^{-1}..." << std::endl;
         auto invStart = high_resolution_clock::now();
 
-        result.Sw_inv = eval_inverse(Sw_rebatched, f_tilde, inversionIterations);
+        // Upper bound for trace: N * f (for Z-score normalization)
+        double traceUpperBound = static_cast<double>(dataset.numSamples) * f;
+
+        // Pass actual feature dimension f for proper identity matrix (zeros at padding positions)
+        result.Sw_inv = eval_inverse_impl(Sw_rebatched, f_tilde, inversionIterations, f, traceUpperBound);
 
         auto invEnd = high_resolution_clock::now();
         timings.inversionTime = invEnd - invStart;
@@ -555,18 +573,28 @@ public:
         result.Sw_inv_decrypted = ptx->GetRealPackedValue();
         result.Sw_inv_decrypted.resize(f_tilde * f_tilde);
 
-        // ========== Step 5: Compute S_W^{-1} * S_B ==========
-        if (verbose) std::cout << "[Step 5] Computing S_W^{-1} * S_B..." << std::endl;
+        // ========== Step 4: Compute w = S_W^{-1} * (μ_1 - μ_0) ==========
+        if (verbose) std::cout << "[Step 4] Computing w = S_W^{-1} * (mu_1 - mu_0)..." << std::endl;
 
+        // μ_1 - μ_0 (both in f_tilde x f_tilde replicated form)
+        auto meanDiff = m_cc->EvalSub(classMeanVec[1], classMeanVec[0]);
+
+        if (verbose) {
+            debugPrintVector("(mu_1 - mu_0)", meanDiff, f);
+        }
+
+        // w = S_W^{-1} * (μ_1 - μ_0) using matrix-vector multiplication
+        // meanDiff is replicated row vector, S_W^{-1} is matrix
+        // Result: w as replicated row vector
         int s = std::min((int)f_tilde, (int)(m_cc->GetRingDimension() / 2 / f_tilde / f_tilde));
         s = std::max(1, s);
         int B = f_tilde / s;
 
-        result.Sw_inv_Sb = eval_mult_NewCol(result.Sw_inv, Sb, s, B, 4, 4, 4, f_tilde);
+        result.Sw_inv_Sb = eval_mult_NewCol(result.Sw_inv, meanDiff, s, B, 4, 4, 4, f_tilde);
         result.Sw_inv_Sb->SetSlots(f_tilde * f_tilde);
 
         if (verbose) {
-            debugPrintMatrix("S_W^{-1} * S_B", result.Sw_inv_Sb, f, f, f_tilde);
+            debugPrintVector("w = S_W^{-1} * (mu_1 - mu_0)", result.Sw_inv_Sb, f);
         }
 
         auto totalEnd = high_resolution_clock::now();
@@ -576,7 +604,6 @@ public:
             std::cout << "\n========== Training Complete ==========" << std::endl;
             std::cout << "Mean computation: " << timings.meanComputation.count() << " s" << std::endl;
             std::cout << "S_W computation: " << timings.swComputation.count() << " s" << std::endl;
-            std::cout << "S_B computation: " << timings.sbComputation.count() << " s" << std::endl;
             std::cout << "Matrix inversion: " << timings.inversionTime.count() << " s" << std::endl;
             std::cout << "Total time: " << timings.totalTime.count() << " s" << std::endl;
         }

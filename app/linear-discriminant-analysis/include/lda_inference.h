@@ -19,6 +19,9 @@ struct InferenceResult {
     int correctCount;
     int totalCount;
     double accuracy;
+    double precision;
+    double recall;
+    double f1;
 };
 
 class LDAInference {
@@ -142,6 +145,20 @@ public:
 
         result.totalCount = numTests;
         result.accuracy = static_cast<double>(result.correctCount) / numTests;
+
+        // Compute precision, recall, F1
+        int tp = 0, fp = 0, fn = 0;
+        for (size_t i = 0; i < numTests; i++) {
+            int actual = testSet.labels[i];
+            int predicted = result.predictions[i];
+            if (actual == 1 && predicted == 1) tp++;
+            else if (actual == 0 && predicted == 1) fp++;
+            else if (actual == 1 && predicted == 0) fn++;
+        }
+        result.precision = (tp + fp > 0) ? static_cast<double>(tp) / (tp + fp) : 0.0;
+        result.recall = (tp + fn > 0) ? static_cast<double>(tp) / (tp + fn) : 0.0;
+        result.f1 = (result.precision + result.recall > 0) ?
+                    2 * result.precision * result.recall / (result.precision + result.recall) : 0.0;
 
         if (verbose) {
             if (numTests > 10) {

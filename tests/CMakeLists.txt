@@ -24,6 +24,16 @@ set(TEST_SOURCES
     inverse_naive_test.cpp
 )
 
+# Simple standalone test for LDA's JKLS18 (no gtest)
+add_executable(lda_jkls18_test lda_jkls18_test.cpp)
+target_link_libraries(lda_jkls18_test
+    PRIVATE
+    matrix_operations
+    utils
+    OPENFHEcore
+    OPENFHEpke
+)
+
 # Add each test executable
 foreach(test_source ${TEST_SOURCES})
     # Get the filename without extension

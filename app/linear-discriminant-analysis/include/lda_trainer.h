@@ -21,6 +21,15 @@ struct LDATrainResult {
     // Intermediate results for debugging
     std::vector<std::vector<double>> X_bar_c;   // Centered data per class
     std::vector<std::vector<double>> S_c;       // Scatter matrix per class
+
+    // Fisher discriminant direction and projected means
+    std::vector<double> eigenvector;     // w = S_W^{-1} * (mu_1 - mu_0)
+    double projectedMean0;               // w^T * mu_0
+    double projectedMean1;               // w^T * mu_1
+
+    // Store Sw and Sb for file saving
+    std::vector<double> Sw;
+    std::vector<double> Sb;
 };
 
 class LDATrainer {
@@ -239,6 +248,10 @@ public:
             PlaintextOps::printMatrix(Sw, f, f, "S_W", f_tilde);
         }
 
+        // Store Sw and Sb for file saving
+        result.Sw = Sw;
+        result.Sb = Sb;
+
         // ========== Step 5: Compute S_W^{-1} ==========
         if (verbose) std::cout << "\n[Step 5] Computing S_W^{-1} (Schulz iteration, " << inversionIterations << " iters)..." << std::endl;
 
@@ -284,13 +297,48 @@ public:
             PlaintextOps::printMatrix(Sw_inv_Sb, f, f, "S_W^{-1} * S_B");
         }
 
+        // ========== Step 7: Compute Eigenvector w = S_W^{-1} * (mu_1 - mu_0) ==========
+        if (verbose) std::cout << "[Step 7] Computing eigenvector w = S_W^{-1} * (mu_1 - mu_0)..." << std::endl;
+
+        // Compute diff = mu_1 - mu_0
+        std::vector<double> diff(f);
+        for (size_t i = 0; i < f; i++) {
+            diff[i] = result.classMeans[1][i] - result.classMeans[0][i];
+        }
+
+        // w = S_W^{-1} * diff
+        result.eigenvector.resize(f, 0.0);
+        for (size_t i = 0; i < f; i++) {
+            for (size_t j = 0; j < f; j++) {
+                result.eigenvector[i] += Sw_inv_actual[i * f + j] * diff[j];
+            }
+        }
+
+        if (verbose) {
+            PlaintextOps::printVector(result.eigenvector, f, "Eigenvector w");
+        }
+
+        // ========== Step 8: Compute Projected Means ==========
+        if (verbose) std::cout << "[Step 8] Computing projected means..." << std::endl;
+
+        result.projectedMean0 = 0.0;
+        result.projectedMean1 = 0.0;
+        for (size_t i = 0; i < f; i++) {
+            result.projectedMean0 += result.eigenvector[i] * result.classMeans[0][i];
+            result.projectedMean1 += result.eigenvector[i] * result.classMeans[1][i];
+        }
+
+        if (verbose) {
+            std::cout << "proj_mu_0 = " << result.projectedMean0 << std::endl;
+            std::cout << "proj_mu_1 = " << result.projectedMean1 << std::endl;
+        }
+
         if (verbose) {
             std::cout << "\n========== Training Complete ==========" << std::endl;
         }
 
-        if (!outputFile.empty()) {
-            saveResultsToFile(outputFile, result, Sw, Sb, f, f_tilde);
-        }
+        // Note: file saving now happens from main after inference
+        (void)outputFile;  // Mark as intentionally unused
 
         return result;
     }
@@ -317,7 +365,14 @@ public:
                                   const std::vector<double>& Sw,
                                   const std::vector<double>& Sb,
                                   size_t f,
-                                  size_t f_tilde) {
+                                  size_t f_tilde,
+                                  double accuracy = -1.0,
+                                  int correct = 0,
+                                  int total = 0,
+                                  double precision = 0.0,
+                                  double recall = 0.0,
+                                  double f1 = 0.0,
+                                  int trainSamples = 0) {
         std::ofstream file(filename);
         if (!file.is_open()) {
             std::cerr << "Failed to open file: " << filename << std::endl;
@@ -340,14 +395,7 @@ public:
             file << std::endl << std::endl;
         }
 
-        file << "=== S_B (" << f << "x" << f << ") ===" << std::endl;
-        for (size_t i = 0; i < f; i++) {
-            for (size_t j = 0; j < f; j++) {
-                file << std::setw(10) << Sb[i * f_tilde + j] << " ";
-            }
-            file << std::endl;
-        }
-        file << std::endl;
+        // S_B skipped (not needed for binary Fisher LDA)
 
         // Intermediate results: X_bar_c and S_c per class
         for (size_t c = 0; c < result.X_bar_c.size(); c++) {
@@ -390,14 +438,35 @@ public:
         }
         file << std::endl;
 
-        file << "=== S_W^{-1} * S_B (" << f << "x" << f << ") ===" << std::endl;
+        // S_W^{-1} * S_B skipped (not needed for binary Fisher LDA)
+
+        // Eigenvector (Fisher discriminant direction)
+        file << "=== Eigenvector w = S_W^{-1} * (mu_1 - mu_0) (len=" << f << ") ===" << std::endl;
         for (size_t i = 0; i < f; i++) {
-            for (size_t j = 0; j < f; j++) {
-                file << std::setw(10) << result.Sw_inv_Sb[i * f + j] << " ";
-            }
+            file << std::setw(10) << result.eigenvector[i] << " ";
+        }
+        file << std::endl << std::endl;
+
+        // Projected means
+        file << "=== Projected Means ===" << std::endl;
+        file << "proj_mu_0 = " << result.projectedMean0 << std::endl;
+        file << "proj_mu_1 = " << result.projectedMean1 << std::endl;
+        file << std::endl;
+
+        // Accuracy and metrics
+        if (accuracy >= 0) {
+            file << "=== Training Info ===" << std::endl;
+            file << "Training samples: " << trainSamples << std::endl;
+            file << std::endl;
+
+            file << "=== Inference Results ===" << std::endl;
+            file << "Correct: " << correct << " / " << total << std::endl;
+            file << "Accuracy: " << std::setprecision(2) << accuracy << "%" << std::endl;
+            file << "Precision: " << std::setprecision(2) << precision << "%" << std::endl;
+            file << "Recall: " << std::setprecision(2) << recall << "%" << std::endl;
+            file << "F1 Score: " << std::setprecision(2) << f1 << "%" << std::endl;
             file << std::endl;
         }
-        file << std::endl;
 
         file.close();
         std::cout << "Results saved to: " << filename << std::endl;

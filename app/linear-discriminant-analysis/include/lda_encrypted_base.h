@@ -303,54 +303,169 @@ protected:
         std::cout << std::endl << std::endl << std::flush;
     }
 
-    // ============ JKLS18 Matrix Multiplication (256×256) ============
-    // This is for the large matrix multiplication X^T * X
-    // Used by both AR24 and NewCol for S_W computation
+    // ============ JKLS18 Matrix Multiplication ============
+    // Proper implementation with baby-step/giant-step transforms
+    // Based on matrix_algo_singlePack.h
 
+    // Sigma mask: marks k-th diagonal (for baby-step/giant-step)
     std::vector<double> generateSigmaMsk(int k, int d) {
-        std::vector<double> msk(d * d, 0);
-        for (int i = 0; i < d; i++) {
-            msk[(i * d) + ((i + k) % d)] = 1;
+        std::vector<double> u(d * d, 0);
+        if (k >= 0) {
+            for (int i = d * k; i < d - k + d * k && i < d * d; ++i) {
+                u[i] = 1.0;
+            }
+        } else {
+            for (int i = 0; i < d * d; i++) {
+                if (i < d + d * (d + k) && i >= -k + d * (d + k))
+                    u[i] = 1.0;
+            }
         }
-        return msk;
+        return u;
     }
 
+    // Tau mask: marks k-th column
     std::vector<double> generateTauMsk(int k, int d) {
         std::vector<double> msk(d * d, 0);
-        for (int i = 0; i < d; i++) {
-            msk[(((i + k) % d) * d) + i] = 1;
-        }
+        for (int i = k; i < d * d; i += d)
+            msk[i] = 1;
         return msk;
     }
 
-    // σ transform: extract k-th diagonal and shift
-    Ciphertext<DCRTPoly> sigmaTransform(Ciphertext<DCRTPoly> M, int k, int d) {
-        auto msk = m_cc->MakeCKKSPackedPlaintext(generateSigmaMsk(k, d), 1, 0, nullptr, d * d);
-        auto result = m_cc->EvalMult(M, msk);
-        // Shift so that the k-th diagonal becomes the main diagonal
-        return rot.rotate(result, -k);
+    // Column shifting mask
+    std::vector<double> generateShiftingMsk(int k, int d) {
+        std::vector<double> v(d * d, 0);
+        for (int i = k; i < d * d; i += d) {
+            for (int j = i; j < i + d - k; ++j) {
+                v[j] = 1;
+            }
+        }
+        return v;
     }
 
-    // τ transform: extract k-th column-diagonal and shift
-    Ciphertext<DCRTPoly> tauTransform(Ciphertext<DCRTPoly> M, int k, int d) {
-        auto msk = m_cc->MakeCKKSPackedPlaintext(generateTauMsk(k, d), 1, 0, nullptr, d * d);
-        auto result = m_cc->EvalMult(M, msk);
-        // Shift so columns align
-        return rot.rotate(result, -k * d);
+    // Column shifting operation for JKLS18
+    Ciphertext<DCRTPoly> columnShifting(const Ciphertext<DCRTPoly>& M, int l, int d) {
+        if (l == 0) return M->Clone();
+
+        std::vector<double> msk = generateShiftingMsk(l, d);
+        Plaintext pmsk = m_cc->MakeCKKSPackedPlaintext(msk, 1, 0, nullptr, d * d);
+
+        auto tmp = m_cc->EvalMult(pmsk, M);
+        auto M_1 = rot.rotate(m_cc->EvalSub(M, tmp), l - d);
+        auto M_2 = rot.rotate(tmp, l);
+
+        return m_cc->EvalAdd(M_1, M_2);
+    }
+
+    // σ transform: full matrix transform with baby-step/giant-step
+    Ciphertext<DCRTPoly> sigmaTransform(const Ciphertext<DCRTPoly>& M, int d) {
+        auto sigma_M = getZeroCiphertext(d * d);
+
+        int bs = (int)round(sqrt((double)d));
+
+        // Baby steps
+        std::vector<Ciphertext<DCRTPoly>> babySteps(bs);
+        for (int i = 0; i < bs; i++) {
+            babySteps[i] = rot.rotate(M, i);
+        }
+
+        // Handle remainder diagonals
+        for (int i = 1; i < d - bs * (bs - 1); i++) {
+            Plaintext pmsk = m_cc->MakeCKKSPackedPlaintext(
+                generateSigmaMsk(-d + i, d), 1, 0, nullptr, d * d);
+            m_cc->EvalAddInPlace(sigma_M,
+                m_cc->EvalMult(rot.rotate(M, i - d), pmsk));
+        }
+
+        // Giant steps
+        for (int i = -(bs - 1); i < bs; i++) {
+            auto tmp = getZeroCiphertext(d * d);
+            for (int j = 0; j < bs; j++) {
+                auto msk = generateSigmaMsk(bs * i + j, d);
+                msk = vectorRotate(msk, -bs * i);
+                auto pmsk = m_cc->MakeCKKSPackedPlaintext(msk, 1, 0, nullptr, d * d);
+                m_cc->EvalAddInPlace(tmp, m_cc->EvalMult(pmsk, babySteps[j]));
+            }
+            m_cc->EvalAddInPlace(sigma_M, rot.rotate(tmp, bs * i));
+        }
+
+        return sigma_M;
+    }
+
+    // τ transform: full matrix transform with baby-step/giant-step
+    Ciphertext<DCRTPoly> tauTransform(const Ciphertext<DCRTPoly>& M, int d) {
+        auto tau_M = getZeroCiphertext(d * d);
+
+        double squareRootd = sqrt((double)d);
+        int squareRootIntd = (int)squareRootd;
+
+        if (squareRootIntd * squareRootIntd == d) {
+            // Perfect square case (e.g., d=64)
+            std::vector<Ciphertext<DCRTPoly>> babySteps(squareRootIntd);
+            for (int i = 0; i < squareRootIntd; i++) {
+                babySteps[i] = rot.rotate(M, d * i);
+            }
+
+            for (int i = 0; i < squareRootIntd; i++) {
+                auto tmp = getZeroCiphertext(d * d);
+                for (int j = 0; j < squareRootIntd; j++) {
+                    auto msk = generateTauMsk(squareRootIntd * i + j, d);
+                    msk = vectorRotate(msk, -squareRootIntd * d * i);
+                    auto pmsk = m_cc->MakeCKKSPackedPlaintext(msk, 1, 0, nullptr, d * d);
+                    m_cc->EvalAddInPlace(tmp, m_cc->EvalMult(babySteps[j], pmsk));
+                }
+                m_cc->EvalAddInPlace(tau_M, rot.rotate(tmp, squareRootIntd * d * i));
+            }
+        } else {
+            // Non-perfect square case
+            int steps = (int)round(squareRootd);
+
+            std::vector<Ciphertext<DCRTPoly>> babySteps(steps);
+            for (int i = 0; i < steps; i++) {
+                babySteps[i] = rot.rotate(M, d * i);
+            }
+
+            for (int i = 0; i < d - steps * (steps - 1); i++) {
+                Plaintext pmsk = m_cc->MakeCKKSPackedPlaintext(
+                    generateTauMsk(steps * (steps - 1) + i, d), 1, 0, nullptr, d * d);
+                m_cc->EvalAddInPlace(tau_M,
+                    m_cc->EvalMult(rot.rotate(M, (steps * (steps - 1) + i) * d), pmsk));
+            }
+
+            for (int i = 0; i < steps - 1; i++) {
+                auto tmp = getZeroCiphertext(d * d);
+                for (int j = 0; j < steps; j++) {
+                    auto msk = generateTauMsk(steps * i + j, d);
+                    msk = vectorRotate(msk, -steps * d * i);
+                    auto pmsk = m_cc->MakeCKKSPackedPlaintext(msk, 1, 0, nullptr, d * d);
+                    m_cc->EvalAddInPlace(tmp, m_cc->EvalMult(babySteps[j], pmsk));
+                }
+                m_cc->EvalAddInPlace(tau_M, rot.rotate(tmp, steps * d * i));
+            }
+        }
+
+        return tau_M;
     }
 
     // JKLS18 matrix multiplication for d×d matrices
+    // Proper implementation: C = A * B
     Ciphertext<DCRTPoly> eval_mult_JKLS18(const Ciphertext<DCRTPoly>& A,
                                           const Ciphertext<DCRTPoly>& B, int d) {
-        auto C = getZeroCiphertext(d * d);
+        // Step 1: Transform both matrices
+        auto sigma_A = sigmaTransform(A, d);
+        auto tau_B = tauTransform(B, d);
 
-        for (int k = 0; k < d; k++) {
-            auto sigmaA = sigmaTransform(A, k, d);
-            auto tauB = tauTransform(B, k, d);
-            m_cc->EvalAddInPlace(C, m_cc->EvalMultAndRelinearize(sigmaA, tauB));
+        // Step 2: Initial element-wise multiplication
+        auto matrixC = m_cc->EvalMultAndRelinearize(sigma_A, tau_B);
+
+        // Step 3: Column shifting and accumulation
+        for (int i = 1; i < d; i++) {
+            auto shifted_A = columnShifting(sigma_A, i, d);
+            tau_B = rot.rotate(tau_B, d);
+            m_cc->EvalAddInPlace(matrixC,
+                m_cc->EvalMultAndRelinearize(shifted_A, tau_B));
         }
 
-        return C;
+        return matrixC;
     }
 
     // ============ Rebatch: Extract f̃×f̃ from largeDim×largeDim matrix ============
@@ -362,45 +477,93 @@ protected:
         // ============================================================
         // Rebatch: Extract f̃×f̃ matrix from largeDim×largeDim space
         // ============================================================
-        // Input: M is largeDim×largeDim (e.g., 256×256 = 65536 slots)
+        // Input: M is largeDim×largeDim (e.g., 256×256 or 64×64)
         //        Actual data is in top-left f_tilde×f_tilde (e.g., 16×16)
         //        Row i is at position i*largeDim (stride = largeDim)
         //
-        // Output: f̃×f̃ matrix replicated s times for AR24 algorithm
-        //         Total slots = f̃² × s (e.g., 256 × 16 = 4096)
-        //
-        // Steps:
-        //   1. Row folding: change stride from largeDim to f_tilde
-        //   2. Masking: keep only first f̃² slots
-        //   3. Replication: copy matrix s times for AR24
+        // Output: f̃×f̃ matrix replicated s times
+        //         Total slots = f̃² × s
         // ============================================================
 
-        int gap = largeDim - f_tilde;  // 256 - 16 = 240
+        int gap = largeDim - f_tilde;
 
-        // Compute replication count s for AR24 algorithm
+        // Compute replication count s (same as inversion algorithm)
+        // s is independent of sample count, only depends on f_tilde
         int ringDim = m_cc->GetRingDimension();
         int s = std::min(f_tilde, ringDim / 2 / f_tilde / f_tilde);
-        s = std::max(1, s);  // At least 1
-        int num_slots = f_tilde * f_tilde * s;  // 16 * 16 * 16 = 4096
+        s = std::max(1, s);
+        int num_slots = f_tilde * f_tilde * s;
 
-        // Step 1: Log-depth row folding (log2(f_tilde) = 4 rotations)
-        // Rotation amounts: gap, 2*gap, 4*gap, 8*gap = 240, 480, 960, 1920
-        // After folding: rows 0-15 are contiguous in positions 0-255
-        auto rebatched = M->Clone();
-        for (int step = 1; step < f_tilde; step *= 2) {
-            auto rotated = rot.rotate(rebatched, step * gap);
-            m_cc->EvalAddInPlace(rebatched, rotated);
+        // Check if we need row-by-row processing (when largeDim is small)
+        // Collision occurs when gap * f_tilde >= largeDim
+        // i.e., when (largeDim - f_tilde) * f_tilde >= largeDim
+        // Simplified: largeDim <= f_tilde * f_tilde / (f_tilde - 1)
+        // For f_tilde=16: threshold ~= 17, so largeDim <= 64 needs special handling
+
+        int rowsPerChunk = largeDim / f_tilde;  // 64/16=4 rows fit before collision
+
+        Ciphertext<DCRTPoly> rebatched;
+
+        if (rowsPerChunk >= f_tilde) {
+            // Large dimension: use log-depth folding (no collision)
+            rebatched = M->Clone();
+            for (int step = 1; step < f_tilde; step *= 2) {
+                auto rotated = rot.rotate(rebatched, step * gap);
+                m_cc->EvalAddInPlace(rebatched, rotated);
+            }
+
+            // Mask to keep only first f̃² elements
+            std::vector<double> msk(f_tilde * f_tilde, 1.0);
+            rebatched = m_cc->EvalMult(rebatched,
+                m_cc->MakeCKKSPackedPlaintext(msk, 1, 0, nullptr, largeDim * largeDim));
+        } else {
+            // Small dimension (e.g., 64): process row-by-row with masking
+            // Split into chunks to avoid collision
+            // Each chunk processes 'rowsPerChunk' rows
+            int numChunks = (f_tilde + rowsPerChunk - 1) / rowsPerChunk;
+
+            std::vector<Ciphertext<DCRTPoly>> chunkResults;
+
+            for (int chunk = 0; chunk < numChunks; chunk++) {
+                int startRow = chunk * rowsPerChunk;
+                int endRow = std::min(startRow + rowsPerChunk, f_tilde);
+
+                // Create mask for this chunk's destination slots
+                std::vector<double> chunkMask(largeDim * largeDim, 0.0);
+                for (int row = startRow; row < endRow; row++) {
+                    for (int col = 0; col < f_tilde; col++) {
+                        chunkMask[row * f_tilde + col] = 1.0;
+                    }
+                }
+
+                // Rotate to bring rows to correct positions
+                auto chunkData = M->Clone();
+                for (int step = 1; step < rowsPerChunk && step < (endRow - startRow); step *= 2) {
+                    auto rotated = rot.rotate(chunkData, step * gap);
+                    m_cc->EvalAddInPlace(chunkData, rotated);
+                }
+
+                // Rotate to bring this chunk to its final position
+                if (startRow > 0) {
+                    int rotAmount = startRow * largeDim - startRow * f_tilde;
+                    chunkData = rot.rotate(chunkData, rotAmount);
+                }
+
+                // Apply mask
+                chunkData = m_cc->EvalMult(chunkData,
+                    m_cc->MakeCKKSPackedPlaintext(chunkMask, 1, 0, nullptr, largeDim * largeDim));
+
+                chunkResults.push_back(chunkData);
+            }
+
+            // Sum all chunks
+            rebatched = chunkResults[0];
+            for (size_t i = 1; i < chunkResults.size(); i++) {
+                m_cc->EvalAddInPlace(rebatched, chunkResults[i]);
+            }
         }
 
-        // Step 2: Mask to keep only f̃×f̃ elements (positions 0 to f̃²-1)
-        // This removes garbage/duplicates in positions f̃² and beyond
-        std::vector<double> msk(f_tilde * f_tilde, 1.0);
-        rebatched = m_cc->EvalMult(rebatched,
-            m_cc->MakeCKKSPackedPlaintext(msk, 1, 0, nullptr, largeDim * largeDim));
-
-        // Step 3: Replicate matrix s times for AR24 algorithm
-        // Rotation amounts: -f̃², -2f̃², -4f̃², -8f̃² = -256, -512, -1024, -2048
-        // After replication: s copies of f̃×f̃ matrix in positions 0 to s×f̃²-1
+        // Replicate matrix s times
         for (int i = 1; i < s; i *= 2) {
             auto rotated = rot.rotate(rebatched, -i * f_tilde * f_tilde);
             m_cc->EvalAddInPlace(rebatched, rotated);

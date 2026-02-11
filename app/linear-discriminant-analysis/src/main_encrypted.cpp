@@ -280,7 +280,7 @@ int main(int argc, char* argv[]) {
     bool debugMode = true;
     bool useBootstrapping = true;
     std::string algorithm = "both";
-    int maxTrainSamples = 0;  // 0 means use all samples
+    int maxTrainSamples = 64;  // Fixed to 64 samples
 
     bool sbOnly = false;  // Stop after S_B computation (for quick testing)
 

@@ -175,11 +175,12 @@ public:
 
     // Scalar inverse using power series: computes 1/t given encrypted t and upper_bound u >= t
     // Algorithm: x = 1/u, t_bar = 1 - t/u, iterate x = x*(1+t_bar), t_bar = t_bar^2
-    Ciphertext<DCRTPoly> eval_scalar_inverse(const Ciphertext<DCRTPoly>& t, double upperBound, int iterations) {
-        // x_0 = 1/upperBound (plaintext scalar replicated)
+    // batchSize: number of slots to replicate the result
+    Ciphertext<DCRTPoly> eval_scalar_inverse(const Ciphertext<DCRTPoly>& t, double upperBound, int iterations, int batchSize) {
+        // x_0 = 1/upperBound replicated to all slots
         double x0 = 1.0 / upperBound;
         auto x = m_cc->Encrypt(m_keyPair.publicKey,
-            m_cc->MakeCKKSPackedPlaintext(std::vector<double>(1, x0)));
+            m_cc->MakeCKKSPackedPlaintext(std::vector<double>(batchSize, x0), 1, 0, nullptr, batchSize));
 
         // t_bar = 1 - t/upperBound
         auto t_bar = m_cc->EvalSub(1.0, m_cc->EvalMult(t, x0));
@@ -239,7 +240,7 @@ public:
         }
 
         // Compute encrypted alpha = 1/trace using power series (3 iterations for scalar)
-        auto alphaEnc = eval_scalar_inverse(traceEnc, traceUpperBound, 3);
+        auto alphaEnc = eval_scalar_inverse(traceEnc, traceUpperBound, 3, d * d);
 
         if (m_verbose) {
             // For debugging: decrypt and show actual trace and alpha

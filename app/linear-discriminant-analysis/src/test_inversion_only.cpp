@@ -3,7 +3,7 @@
 // This allows fast debugging of the inversion algorithm without running full LDA
 
 #include "lda_data_encoder.h"
-#include "lda_newcol.h"
+#include "lda_ar24.h"
 #include "encryption.h"
 #include <openfhe.h>
 #include <iostream>
@@ -13,25 +13,25 @@
 
 using namespace lbcrypto;
 
-// Pre-computed S_W from plaintext run (Heart Disease, 64 samples, 13 features)
-// This is the correct S_W that should produce 81.97% accuracy
+// S_W from actual LDA run (Heart Disease, 64 samples, 13 features, trace=691.9)
+// This is the S_W that produced zeros in AR24 inversion
 std::vector<double> getPrecomputedSw() {
-    // From plaintext_hd_results_n64.txt
+    // From actual encrypted LDA run with 64 samples
     // Row-major order, 13x13 actual features (padded to 16x16)
     std::vector<double> Sw_13x13 = {
-        11.2115, -1.9872,  1.8718,  0.3462,  2.1442, -1.0064, -0.9679, -0.3162,  2.9679, -2.4215, -1.1859,  2.5512,  1.4487,
-        -1.9872, 51.9423, -1.7308,  1.0385, -6.9263,  9.9038,  0.1154, -1.7302,  9.4808, -1.1310, -2.8077, -3.9936,  8.0513,
-         1.8718, -1.7308, 16.5256, -0.9744,  2.1314, -3.3333,  0.0897, -2.7427,  0.5000, -1.9017, -1.7308, -0.2692, -2.8590,
-         0.3462,  1.0385, -0.9744,  9.8590, -0.7147,  0.0897,  5.3333,  0.5918,  3.7821, -0.9786, -0.6282, -2.5897, -0.7308,
-         2.1442, -6.9263,  2.1314, -0.7147,  5.6826,  0.2692,  0.2885, -0.0449,  1.9679, -0.7091,  0.9231,  1.9743,  0.6346,
-        -1.0064,  9.9038, -3.3333,  0.0897,  0.2692, 23.2308, -4.0000,  0.2885,  2.9231,  1.6449, -3.2692, -4.3462,  2.2692,
-        -0.9679,  0.1154,  0.0897,  5.3333,  0.2885, -4.0000, 60.6410, -3.9974,  1.2692,  0.4594,  7.0385,  7.9231, -6.7308,
-        -0.3162, -1.7302, -2.7427,  0.5918, -0.0449,  0.2885, -3.9974,  8.9744, -4.3462, -2.9274, -4.3462, -1.1026,  0.0192,
-         2.9679,  9.4808,  0.5000,  3.7821,  1.9679,  2.9231,  1.2692, -4.3462, 37.0385, -0.3145,  2.2692, -1.2308,  7.9231,
-        -2.4215, -1.1310, -1.9017, -0.9786, -0.7091,  1.6449,  0.4594, -2.9274, -0.3145,  9.7043,  6.5470, -1.4060,  4.7381,
-        -1.1859, -2.8077, -1.7308, -0.6282,  0.9231, -3.2692,  7.0385, -4.3462,  2.2692,  6.5470, 19.6923, -1.1538,  3.0769,
-         2.5512, -3.9936, -0.2692, -2.5897,  1.9743, -4.3462,  7.9231, -1.1026, -1.2308, -1.4060, -1.1538, 10.2051,  0.5769,
-         1.4487,  8.0513, -2.8590, -0.7308,  0.6346,  2.2692, -6.7308,  0.0192,  7.9231,  4.7381,  3.0769,  0.5769, 36.5769
+        58.6974,  -3.5278,  14.1253,  20.8481,  22.5481,   7.5208,  17.6797, -23.4590,   7.5180,   8.9947,   6.1894,  19.0222,   9.9991,
+        -3.5278,  54.2291,  -6.2869,  -0.1273, -13.9894,  17.8023,  -4.5308,  -3.0022,  10.6812,  -7.3789,  -7.7351,  -9.6560,   8.4133,
+        14.1253,  -6.2869,  49.7587,  -1.5966,   3.3445, -10.4177,   2.3190, -18.5653,   9.8208,  -1.6076,  -1.9796,   8.5707,  -0.4942,
+        20.8481,  -0.1273,  -1.5966,  63.5466,   7.9160,  23.3991,  13.5337,  -2.7706,   0.8076,   6.3440,   0.7574,  -1.1563,  -0.3090,
+        22.5481, -13.9894,   3.3445,   7.9160,  63.5534,  -2.4244,  17.2481,  -3.7799,   4.6728,   1.2747,   2.2540,   7.6726,   4.4115,
+         7.5208,  17.8023, -10.4177,  23.3991,  -2.4244,  63.2642,   4.3063,  -1.3702,   6.2768,  -2.3836,  13.0538, -10.3543,   9.2582,
+        17.6797,  -4.5308,   2.3190,  13.5337,  17.2481,   4.3063,  61.2215,  -2.8400,   0.1735,   2.4889,   8.3781,  11.4494,  -5.6838,
+       -23.4590,  -3.0022, -18.5653,  -2.7706,  -3.7799,  -1.3702,  -2.8400,  48.9188, -17.7847, -13.6963, -17.7071,  -4.0702,  -3.9345,
+         7.5180,  10.6812,   9.8208,   0.8076,   4.6728,   6.2768,   0.1735, -17.7847,  44.4275,  -1.1515,   2.3564,  -3.4913,   7.1571,
+         8.9947,  -7.3789,  -1.6076,   6.3440,   1.2747,  -2.3836,   2.4889, -13.6963,  -1.1515,  46.4802,  33.5021,   2.8815,  10.5891,
+         6.1894,  -7.7351,  -1.9796,   0.7574,   2.2540,  13.0538,   8.3781, -17.7071,   2.3564,  33.5021,  53.5425,  -0.5553,   1.0502,
+        19.0222,  -9.6560,   8.5707,  -1.1563,   7.6726, -10.3543,  11.4494,  -4.0702,  -3.4913,   2.8815,  -0.5553,  38.0112,  -4.7923,
+         9.9991,   8.4133,  -0.4942,  -0.3090,   4.4115,   9.2582,  -5.6838,  -3.9345,   7.1571,  10.5891,   1.0502,  -4.7923,  46.2627
     };
 
     // Pad to 16x16
@@ -129,7 +129,7 @@ int main() {
     // ========== Setup CKKS Encryption ==========
     std::cout << "\n--- Setting up CKKS Encryption ---" << std::endl;
 
-    int maxDim = f_tilde;
+    int maxDim = 64;  // AR24 uses d*d*s = 16*16*16 = 4096 slots, need rotation keys for 64*64
     int multDepth = 29;
     uint32_t scalingModSize = 59;
     uint32_t firstModSize = 60;
@@ -171,20 +171,18 @@ int main() {
     std::cout << "S_W encrypted. Level: " << SwEnc->GetLevel() << std::endl;
 
     // ========== Test Inversion ==========
-    std::cout << "\n--- Testing Matrix Inversion (NewCol) ---" << std::endl;
+    std::cout << "\n--- Testing Matrix Inversion (AR24) ---" << std::endl;
 
-    // Create LDA_NewCol instance
-    LDA_NewCol lda(enc, cc, keyPair, rotIndices, multDepth, true);
+    // Create LDA_AR24 instance
+    LDA_AR24 lda(enc, cc, keyPair, rotIndices, multDepth, true);
     lda.m_verbose = true;
 
     auto start = std::chrono::high_resolution_clock::now();
 
-    // Use new power series algorithm
-    // s=64 (samples), f=13 (features), f_tilde=16 (padded)
-    int s = 64;  // Number of samples
-    int scalarIters = 3;
-    int matrixIters = 25;  // More iterations for testing
-    auto SwInvEnc = lda.eval_inverse_with_params(SwEnc, f, f_tilde, s, scalarIters, matrixIters);
+    // Full 25 iterations to test bootstrapping properly
+    int matrixIters = 25;
+    double traceUpperBound = 64.0 * f;  // samples * features
+    auto SwInvEnc = lda.eval_inverse_impl(SwEnc, f_tilde, matrixIters, f, traceUpperBound);
 
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::seconds>(end - start);

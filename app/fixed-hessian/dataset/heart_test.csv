@@ -1,4 +1,4 @@
-f0,f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,label
+age,sex,cp,trestbps,chol,fbs,restecg,thalach,exang,oldpeak,slope,ca,thal,target
 58,1,2,140,211,1,2,165,0,0,0,0,1,0
 52,0,2,136,196,0,2,169,0,0.1,1,0,1,0
 59,1,0,170,288,0,2,159,0,0.2,1,0,3,1

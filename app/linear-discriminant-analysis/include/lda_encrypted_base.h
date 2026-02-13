@@ -113,23 +113,39 @@ protected:
         return msk;
     }
 
-    // ============ Matrix Transpose ============
+    // ============ Matrix Transpose (BSGS optimized) ============
 
     Ciphertext<DCRTPoly> eval_transpose(Ciphertext<DCRTPoly> M, int d, int batchSize) {
-        auto p = m_cc->MakeCKKSPackedPlaintext(generateTransposeMask(0, d), 1, 0, nullptr, batchSize);
-        auto M_transposed = m_cc->EvalMult(M, p);
+        int bs = (int)round(sqrt((double)d));
 
-        for (int i = 1; i < d; i++) {
-            p = m_cc->MakeCKKSPackedPlaintext(generateTransposeMask(i, d), 1, 0, nullptr, batchSize);
-            m_cc->EvalAddInPlace(M_transposed,
-                                m_cc->EvalMult(rot.rotate(M, (d - 1) * i), p));
+        std::vector<Ciphertext<DCRTPoly>> babyStepsOfM(bs);
+        for (int i = 0; i < bs; i++) {
+            babyStepsOfM[i] = rot.rotate(M, (d - 1) * i);
         }
 
-        for (int i = -1; i > -d; i--) {
-            p = m_cc->MakeCKKSPackedPlaintext(generateTransposeMask(i, d), 1, 0, nullptr, batchSize);
-            m_cc->EvalAddInPlace(M_transposed,
-                                m_cc->EvalMult(rot.rotate(M, (d - 1) * i), p));
+        std::vector<double> zeroVec(batchSize, 0.0);
+        auto M_transposed = m_cc->Encrypt(m_keyPair.publicKey,
+            m_cc->MakeCKKSPackedPlaintext(zeroVec, 1, 0, nullptr, batchSize));
+
+        for (int i = -bs; i < bs; i++) {
+            auto tmp = m_cc->Encrypt(m_keyPair.publicKey,
+                m_cc->MakeCKKSPackedPlaintext(zeroVec, 1, 0, nullptr, batchSize));
+
+            int js = (i == -bs) ? 1 : 0;
+            for (int j = js; j < bs; j++) {
+                int k = bs * i + j;
+                if (k >= d || k <= -d) continue;
+
+                auto vmsk = generateTransposeMask(k, d);
+                vmsk = vectorRotate(vmsk, -bs * (d - 1) * i);
+                auto pmsk = m_cc->MakeCKKSPackedPlaintext(vmsk, 1, 0, nullptr, batchSize);
+                m_cc->EvalAddInPlace(tmp, m_cc->EvalMult(babyStepsOfM[j], pmsk));
+            }
+
+            tmp = rot.rotate(tmp, bs * (d - 1) * i);
+            m_cc->EvalAddInPlace(M_transposed, tmp);
         }
+
         return M_transposed;
     }
 

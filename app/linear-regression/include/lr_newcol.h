@@ -191,8 +191,9 @@ private:
         Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI, 1, 0, nullptr, d*d);
 
         auto trace = this->eval_trace(M, d, d*d);
-        auto trace_reciprocal =
-            this->m_cc->EvalDivide(trace, 350, 355, 5);
+        // upperBound = SAMPLE_DIM * FEATURE_DIM = 64 * 8 = 512
+        double traceUpperBound = static_cast<double>(SAMPLE_DIM) * FEATURE_DIM;
+        auto trace_reciprocal = this->eval_scalar_inverse(trace, traceUpperBound, 3, d*d);
 
 
         auto Y = this->m_cc->EvalMult(pI, trace_reciprocal);
@@ -251,88 +252,129 @@ public:
     TimingResult trainWithTimings(const Ciphertext<DCRTPoly>& X,
                                  const Ciphertext<DCRTPoly>& y) override {
         using namespace std::chrono;
-     
+
         int SAMPLE_DIM = 64;
         int FEATURE_DIM = 8;
 
-        // Step 1: X^tX
-        int s1 = std::min(SAMPLE_DIM, m_maxBatch / SAMPLE_DIM /SAMPLE_DIM);
-        int B1 = SAMPLE_DIM / s1; 
-        int ng1 = 4; 
-        int nb1 = 16;
-        int np1 = 8; 
+        if (m_verbose) {
+            std::cout << "\n========== NewCol Encrypted LR Training ==========" << std::endl;
+            debugPrintMatrix("Input X", X, SAMPLE_DIM, SAMPLE_DIM, SAMPLE_DIM);
+        }
 
+        // Step 1: X^tX using JKLS18 (unified 64x64 multiplication)
+        if (m_verbose) std::cout << "[Step 1] Computing X^T * X with JKLS18..." << std::endl;
         auto step1_start = high_resolution_clock::now();
         auto Xt = eval_transpose(X, SAMPLE_DIM, SAMPLE_DIM * SAMPLE_DIM);
-        auto XtX = eval_mult(Xt, X, s1, B1, ng1, nb1, np1, SAMPLE_DIM);
+        auto XtX = eval_mult_JKLS18(Xt, X, SAMPLE_DIM);
+
+        if (m_verbose) {
+            debugPrintMatrix("X^T * X (64x64)", XtX, SAMPLE_DIM, SAMPLE_DIM, SAMPLE_DIM);
+        }
 
         // re-batch
+        if (m_verbose) std::cout << "[Step 1b] Rebatching X^T*X from 64x64 to 8x8..." << std::endl;
         auto rebatched_XtX = XtX->Clone();
         for(int i = 0; i < FEATURE_DIM-1; i++) {
-            m_cc->EvalAddInPlace(rebatched_XtX, 
+            m_cc->EvalAddInPlace(rebatched_XtX,
                 rot.rotate(XtX, (SAMPLE_DIM - FEATURE_DIM)*(i+1)));
         }
         std::vector<double> msk(FEATURE_DIM*FEATURE_DIM, 1.0);
-        rebatched_XtX = m_cc->EvalMult(rebatched_XtX, 
+        rebatched_XtX = m_cc->EvalMult(rebatched_XtX,
             m_cc->MakeCKKSPackedPlaintext(msk));
 
         for(int i = 0; i < log2((SAMPLE_DIM*SAMPLE_DIM)/(FEATURE_DIM*FEATURE_DIM)); i++) {
-            m_cc->EvalAddInPlace(rebatched_XtX, 
+            m_cc->EvalAddInPlace(rebatched_XtX,
                 rot.rotate(rebatched_XtX, -SAMPLE_DIM*(1<<i)));
         }
         rebatched_XtX->SetSlots(FEATURE_DIM*FEATURE_DIM);
         auto step1_end = high_resolution_clock::now();
 
+        if (m_verbose) {
+            debugPrintMatrix("X^T * X (rebatched 8x8)", rebatched_XtX, FEATURE_DIM, FEATURE_DIM, FEATURE_DIM);
+            double tr = debugGetTrace(rebatched_XtX, FEATURE_DIM);
+            std::cout << "trace(X^T * X) = " << tr << std::endl;
+        }
+
         // Step 2: Matrix inverse
+        if (m_verbose) std::cout << "\n[Step 2] Computing (X^T * X)^{-1}..." << std::endl;
         int s2 = std::min(FEATURE_DIM, m_maxBatch / FEATURE_DIM /FEATURE_DIM);
-        int B2 = FEATURE_DIM / s2; 
-        int ng2 = 2; 
+        int B2 = FEATURE_DIM / s2;
+        int ng2 = 2;
         int nb2 = 4;
-        int np2 = 2; 
+        int np2 = 2;
         auto step2_start = high_resolution_clock::now();
         auto inv_XtX = eval_inverse(rebatched_XtX, s2, B2, ng2, nb2, np2, FEATURE_DIM, 18);
         auto step2_end = high_resolution_clock::now();
 
+        if (m_verbose) {
+            debugPrintMatrix("(X^T * X)^{-1}", inv_XtX, FEATURE_DIM, FEATURE_DIM, FEATURE_DIM);
+        }
+
         // Step 3: X^ty
+        if (m_verbose) std::cout << "[Step 3] Computing X^T * y..." << std::endl;
         auto step3_start = high_resolution_clock::now();
-        auto Xty = computeXty(Xt, y, FEATURE_DIM, SAMPLE_DIM);
+        auto Xty = computeXty(X, y, FEATURE_DIM, SAMPLE_DIM);
         auto step3_end = high_resolution_clock::now();
 
-        // Step 4: Final weight computation
+        if (m_verbose) {
+            debugPrintMatrix("X^T * y (8x8 view)", Xty, FEATURE_DIM, FEATURE_DIM, FEATURE_DIM);
+        }
+
+        if (m_verbose) std::cout << "[Step 4] Computing weights..." << std::endl;
         auto step4_start = high_resolution_clock::now();
-        auto res = m_cc->EvalMult(inv_XtX, Xty);
-        res->SetSlots(FEATURE_DIM * FEATURE_DIM);
-        m_weights = res->Clone();
 
-        for(int i=1; i<FEATURE_DIM; i++){
-            std::vector<double> column_sum_msk;
-            for(int j=0; j<FEATURE_DIM; j++){
-                for(int k=0; k<FEATURE_DIM; k++){
-                    if(k<FEATURE_DIM-i)
-                        column_sum_msk.push_back(1);
-                    else
-                        column_sum_msk.push_back(0);
-                }    
-            }
-            m_cc->EvalAddInPlace(m_weights, m_cc->EvalMult(rot.rotate(res, i), m_cc->MakeCKKSPackedPlaintext(column_sum_msk, 1, 0, nullptr, FEATURE_DIM*FEATURE_DIM))); 
+        if (m_verbose) {
+            std::cout << "  inv_XtX slots: " << inv_XtX->GetSlots() << std::endl;
+            std::cout << "  Xty slots: " << Xty->GetSlots() << std::endl;
         }
 
-        for(int i=1; i<FEATURE_DIM; i++){
-            std::vector<double> column_sum_msk;
-            for(int j=0; j<FEATURE_DIM; j++){
-                for(int k=0; k<FEATURE_DIM; k++){
-                    if(k<i)
-                        column_sum_msk.push_back(0);
-                    else
-                        column_sum_msk.push_back(1);
-                }    
-            }
-            m_cc->EvalAddInPlace(m_weights,  m_cc->EvalMult(rot.rotate(res, -i), m_cc->MakeCKKSPackedPlaintext(column_sum_msk, 1, 0, nullptr, FEATURE_DIM*FEATURE_DIM)));
+        auto Xty_transposed = eval_transpose(Xty, FEATURE_DIM, FEATURE_DIM * FEATURE_DIM);
+
+        if (m_verbose) {
+            std::cout << "  Xty_transposed slots: " << Xty_transposed->GetSlots() << std::endl;
+            debugPrintMatrix("Xty_transposed", Xty_transposed, FEATURE_DIM, FEATURE_DIM, FEATURE_DIM);
         }
-        // m_weights->SetSlots(FEATURE_DIM);
+
+        auto result = m_cc->EvalMultAndRelinearize(inv_XtX, Xty_transposed);
+
+        if (m_verbose) {
+            std::cout << "  result (after mult) slots: " << result->GetSlots() << std::endl;
+            debugPrintMatrix("inv_XtX * Xty_transposed", result, FEATURE_DIM, FEATURE_DIM, FEATURE_DIM);
+            std::cout << "  [Folding sum] Starting with slots: " << result->GetSlots() << std::endl;
+
+            Plaintext ptx;
+            m_cc->Decrypt(m_keyPair.secretKey, result, &ptx);
+            ptx->SetLength(256);
+            auto vals = ptx->GetRealPackedValue();
+            std::cout << "  Total vals size: " << vals.size() << std::endl;
+            std::cout << "  Slots 64-71: ";
+            for (int i = 64; i < 72 && i < (int)vals.size(); i++) {
+                std::cout << std::setprecision(6) << vals[i] << " ";
+            }
+            std::cout << std::endl;
+            std::cout << "  Slots 128-135: ";
+            for (int i = 128; i < 136 && i < (int)vals.size(); i++) {
+                std::cout << std::setprecision(6) << vals[i] << " ";
+            }
+            std::cout << std::endl;
+        }
+
+        for (int i = (int)log2(FEATURE_DIM) - 1; i >= 0; i--) {
+            int shift = FEATURE_DIM * (1 << i);
+            m_cc->EvalAddInPlace(result, rot.rotate(result, shift));
+            if (m_verbose) {
+                std::cout << "  After rotate by " << shift << ":" << std::endl;
+                debugPrintMatrix("result", result, FEATURE_DIM, FEATURE_DIM, FEATURE_DIM);
+            }
+        }
+
+        m_weights = result;
         auto step4_end = high_resolution_clock::now();
-        std::cout << std::endl;
-        
+
+        if (m_verbose) {
+            debugPrintMatrix("Weights (8x8)", m_weights, FEATURE_DIM, FEATURE_DIM, FEATURE_DIM);
+        }
+
         return {
             step1_end - step1_start,
             step2_end - step2_start,

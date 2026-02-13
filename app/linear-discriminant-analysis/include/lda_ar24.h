@@ -195,8 +195,10 @@ public:
         // Compute trace(M) in encrypted form (d*d slots)
         auto traceEnc = eval_trace(M, d, d * d);
 
+        // For Z-score normalized data: trace(S_W) <= N * d (samples * features)
         if (traceUpperBound <= 0) {
-            traceUpperBound = actualDim * actualDim;
+            // Fallback: N * d where N ~ 64 samples typical
+            traceUpperBound = 64.0 * actualDim;
         }
 
         // Compute encrypted alpha = 1/trace using power series (d*d slots, same as trace)

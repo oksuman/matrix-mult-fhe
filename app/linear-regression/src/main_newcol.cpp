@@ -9,7 +9,7 @@
 // const int SAMPLE_DIM = 64;
 
 int main() {
-    int multDepth = 31; 
+    int multDepth = 29; 
     uint32_t scaleModSize = 59;
     uint32_t firstModSize = 60;
     
@@ -22,7 +22,7 @@ int main() {
     parameters.SetBatchSize(SAMPLE_DIM * SAMPLE_DIM);
     parameters.SetSecurityLevel(HEStd_128_classic);
 
-    std::vector<uint32_t> levelBudget = {4, 5};
+    std::vector<uint32_t> levelBudget = {4, 4};
     std::vector<uint32_t> bsgsDim = {0, 0};
 
 
@@ -51,16 +51,19 @@ int main() {
 
     // Create LinearRegression instance
     LinearRegression_NewCol lr(enc, cc, keyPair, rotations, multDepth);
+    lr.setVerbose(true);  // Enable debug output
 
     // Process training data
     std::vector<double> features;
     std::vector<double> outcomes;
-    CSVProcessor::processDataset("data/trainSet.csv", features, outcomes, 
+    CSVProcessor::processDataset(std::string(DATA_DIR) + "/trainSet.csv", features, outcomes,
                                FEATURE_DIM, SAMPLE_DIM);
     
     // Encrypt data
-    auto X = cc->Encrypt(keyPair.publicKey, cc->MakeCKKSPackedPlaintext(features));
-    auto y = cc->Encrypt(keyPair.publicKey, cc->MakeCKKSPackedPlaintext(outcomes));
+    // X: 64x64 matrix (SAMPLE_DIM*SAMPLE_DIM = 4096 slots)
+    // y: 64 elements (SAMPLE_DIM slots) - will be replicated via SetSlots in computeXty
+    auto X = cc->Encrypt(keyPair.publicKey, cc->MakeCKKSPackedPlaintext(features, 1, 0, nullptr, SAMPLE_DIM * SAMPLE_DIM));
+    auto y = cc->Encrypt(keyPair.publicKey, cc->MakeCKKSPackedPlaintext(outcomes, 1, 0, nullptr, SAMPLE_DIM));
 
     // Open files for results
     std::ofstream timingFile("newcol_timing.txt");
@@ -80,7 +83,7 @@ int main() {
     timingFile.close();
 
     // Calculate and record MSE
-    double mse = lr.inferenceAndCalculateMSE("data/testSet.csv", "newcol_mse_result.txt");
+    double mse = lr.inferenceAndCalculateMSE(std::string(DATA_DIR) + "/testSet.csv", "newcol_mse_result.txt");
     std::cout << "mse: " << mse << std::endl;
     return 0;
 }

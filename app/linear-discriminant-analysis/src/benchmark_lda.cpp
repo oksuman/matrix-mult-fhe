@@ -2,6 +2,12 @@
 // Benchmark comparison of NewCol vs AR24 matrix inversion for LDA
 // Measures: S_W computation, S_W^{-1} computation, w computation
 // Reports: Accuracy, F1 Score, and detailed timing
+//
+// Compile with -DBENCHMARK_VERBOSE=1 for debug output, or 0 for pure benchmark
+
+#ifndef BENCHMARK_VERBOSE
+#define BENCHMARK_VERBOSE 0  // Default: no debug output for accurate timing
+#endif
 
 #include "lda_data_encoder.h"
 #include "lda_ar24.h"
@@ -21,18 +27,20 @@ using namespace lbcrypto;
 const int NUM_SAMPLES = 64;           // Training samples
 const int INVERSION_ITERATIONS = 25;  // Newton-Schulz iterations
 const bool USE_BOOTSTRAPPING = true;
+const int NUM_TRIALS = 1;             // Number of trials for averaging
 
 // ============ Benchmark Result Structure ============
 struct BenchmarkResult {
     std::string algorithm;
+    int num_trials;
 
-    // Timing (seconds)
+    // Timing (seconds) - averaged over trials
     double time_sw;           // S_W computation
     double time_sw_inv;       // S_W^{-1} computation
     double time_w;            // w = S_W^{-1} * (mu_1 - mu_0) computation
     double time_total;        // Total training time
 
-    // Metrics
+    // Metrics (from last trial - should be same across trials)
     double accuracy;
     double precision;
     double recall;
@@ -183,7 +191,8 @@ void saveBenchmarkResults(const std::string& filename,
     file << "--- Configuration ---\n";
     file << "Training samples: " << numSamples << "\n";
     file << "Inversion iterations: " << inversionIters << "\n";
-    file << "Bootstrapping: " << (USE_BOOTSTRAPPING ? "enabled" : "disabled") << "\n\n";
+    file << "Bootstrapping: " << (USE_BOOTSTRAPPING ? "enabled" : "disabled") << "\n";
+    file << "Number of trials: " << newcol.num_trials << "\n\n";
 
     file << std::fixed << std::setprecision(4);
 
@@ -267,7 +276,7 @@ void saveBenchmarkResults(const std::string& filename,
     std::cout << "\nResults saved to: " << filename << std::endl;
 }
 
-// ============ Run Single Algorithm ============
+// ============ Run Single Algorithm with Multiple Trials ============
 template<typename LDAAlgorithm>
 BenchmarkResult runBenchmark(
     const std::string& algorithmName,
@@ -280,45 +289,72 @@ BenchmarkResult runBenchmark(
     const LDADataset& testSet,
     int multDepth) {
 
-    std::cout << "\n" << std::string(60, '=') << std::endl;
-    std::cout << "  Running " << algorithmName << std::endl;
-    std::cout << std::string(60, '=') << std::endl;
+    std::cout << "Running " << algorithmName << " (" << NUM_TRIALS << " trial"
+              << (NUM_TRIALS > 1 ? "s" : "") << ")..." << std::flush;
 
-    LDAAlgorithm lda(enc, cc, keyPair, rotIndices, multDepth, USE_BOOTSTRAPPING);
+    // Accumulate timing over trials
+    double total_time_sw = 0, total_time_inv = 0, total_time_w = 0, total_time_total = 0;
+    BenchmarkResult finalResult;
+    finalResult.algorithm = algorithmName;
+    finalResult.num_trials = NUM_TRIALS;
 
-    LDATimingResult timings;
-    auto result = lda.trainWithTimings(classDataEncrypted, trainSet,
-                                        INVERSION_ITERATIONS, timings,
-                                        true, false);
+    for (int trial = 0; trial < NUM_TRIALS; trial++) {
+#if BENCHMARK_VERBOSE
+        std::cout << "\n  Trial " << (trial + 1) << "/" << NUM_TRIALS << ":" << std::endl;
+#endif
 
-    // Measure w computation time separately
-    auto wStart = std::chrono::high_resolution_clock::now();
+        LDAAlgorithm lda(enc, cc, keyPair, rotIndices, multDepth, USE_BOOTSTRAPPING);
 
-    size_t f = testSet.numFeatures;
-    size_t f_tilde = testSet.paddedFeatures;
-    std::vector<double> mu_diff(f, 0.0);
-    for (size_t i = 0; i < f; i++) {
-        mu_diff[i] = result.classMeans[1][i] - result.classMeans[0][i];
-    }
-    std::vector<double> w(f, 0.0);
-    for (size_t i = 0; i < f; i++) {
-        for (size_t j = 0; j < f; j++) {
-            w[i] += result.Sw_inv_decrypted[i * f_tilde + j] * mu_diff[j];
+        LDATimingResult timings;
+        auto result = lda.trainWithTimings(classDataEncrypted, trainSet,
+                                            INVERSION_ITERATIONS, timings,
+                                            BENCHMARK_VERBOSE, false);
+
+        // Measure w computation time separately
+        auto wStart = std::chrono::high_resolution_clock::now();
+
+        size_t f = testSet.numFeatures;
+        size_t f_tilde = testSet.paddedFeatures;
+        std::vector<double> mu_diff(f, 0.0);
+        for (size_t i = 0; i < f; i++) {
+            mu_diff[i] = result.classMeans[1][i] - result.classMeans[0][i];
         }
+        std::vector<double> w(f, 0.0);
+        for (size_t i = 0; i < f; i++) {
+            for (size_t j = 0; j < f; j++) {
+                w[i] += result.Sw_inv_decrypted[i * f_tilde + j] * mu_diff[j];
+            }
+        }
+
+        auto wEnd = std::chrono::high_resolution_clock::now();
+        double time_w = std::chrono::duration<double>(wEnd - wStart).count();
+
+        // Get metrics (will be same for all trials)
+        finalResult = performInferenceWithMetrics(result, testSet, timings, time_w, algorithmName);
+
+        // Accumulate timing
+        total_time_sw += timings.swComputation.count();
+        total_time_inv += timings.inversionTime.count();
+        total_time_w += time_w;
+        total_time_total += timings.totalTime.count();
+
+#if BENCHMARK_VERBOSE
+        std::cout << "    Time: " << std::fixed << std::setprecision(1)
+                  << timings.totalTime.count() << "s" << std::endl;
+#endif
     }
 
-    auto wEnd = std::chrono::high_resolution_clock::now();
-    double time_w = std::chrono::duration<double>(wEnd - wStart).count();
+    // Compute averages
+    finalResult.num_trials = NUM_TRIALS;
+    finalResult.time_sw = total_time_sw / NUM_TRIALS;
+    finalResult.time_sw_inv = total_time_inv / NUM_TRIALS;
+    finalResult.time_w = total_time_w / NUM_TRIALS;
+    finalResult.time_total = total_time_total / NUM_TRIALS;
 
-    // Get metrics
-    auto benchResult = performInferenceWithMetrics(result, testSet, timings, time_w, algorithmName);
+    std::cout << " Done. (avg: " << std::fixed << std::setprecision(1)
+              << finalResult.time_total << "s)" << std::endl;
 
-    std::cout << "\n--- " << algorithmName << " Results ---" << std::endl;
-    std::cout << "Accuracy: " << std::fixed << std::setprecision(2) << benchResult.accuracy << "%" << std::endl;
-    std::cout << "F1 Score: " << std::fixed << std::setprecision(4) << benchResult.f1_score << std::endl;
-    std::cout << "Total time: " << std::fixed << std::setprecision(2) << benchResult.time_total << " s" << std::endl;
-
-    return benchResult;
+    return finalResult;
 }
 
 // ============ Main ============

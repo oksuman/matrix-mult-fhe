@@ -1,4 +1,3 @@
-// lda_newcol.h
 // LDA implementation using NewCol algorithm for matrix inversion
 #pragma once
 
@@ -234,9 +233,10 @@ public:
 
         // Compute 1/trace using scalar power series (NO decryption)
         // Use traceUpperBound as the upper bound for scalar inverse
+        // For Z-score normalized data: trace(S_W) <= N * d (samples * features)
         if (traceUpperBound <= 0) {
-            // Default: use actualDim^2 as rough upper bound (shouldn't happen if called correctly)
-            traceUpperBound = actualDim * actualDim;
+            // Fallback: N * d where N ~ 64 samples typical
+            traceUpperBound = 64.0 * actualDim;
         }
 
         // Compute encrypted alpha = 1/trace using power series (3 iterations for scalar)
@@ -495,8 +495,8 @@ public:
             }
             auto S_c = eval_mult_JKLS18(X_bar_c_T, X_bar_c, largeDim);
 
-            // Decrypt and store S_c (256x256) for debugging
-            {
+            if (verbose) {
+                // Decrypt S_c only when verbose for debugging
                 Plaintext ptxSc256;
                 m_cc->Decrypt(m_keyPair.secretKey, S_c, &ptxSc256);
                 result.S_c_decrypted[c] = ptxSc256->GetRealPackedValue();

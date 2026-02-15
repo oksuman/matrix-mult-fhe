@@ -168,7 +168,39 @@ public:
         pre.H_inv = LROps::invertMatrix(pre.H, f, 20);
 
         if (verbose) {
-            std::cout << "\ndiag(inv_diag_H): ";
+            // Print X^T y
+            std::cout << "\nX^T y (first 14): ";
+            for (int j = 0; j < LR_RAW_FEATURES + 1; j++) {
+                std::cout << std::setw(10) << std::setprecision(4) << std::fixed
+                          << pre.Xty[0][j] << " ";
+            }
+            std::cout << std::endl;
+
+            // Print X^T X diagonal
+            std::cout << "diag(X^T X) (first 14): ";
+            for (int j = 0; j < LR_RAW_FEATURES + 1; j++) {
+                std::cout << std::setw(10) << std::setprecision(4) << std::fixed
+                          << pre.XtX[0][j * f + j] << " ";
+            }
+            std::cout << std::endl;
+
+            // Print diag_H (before -1/4)
+            std::cout << "raw_diag_h (first 14): ";
+            for (int j = 0; j < LR_RAW_FEATURES + 1; j++) {
+                std::cout << std::setw(10) << std::setprecision(4) << std::fixed
+                          << total_diag_h[j] << " ";
+            }
+            std::cout << std::endl;
+
+            // Print diag_H (after -1/4)
+            std::cout << "diag(H̃) = -1/4 * raw (first 14): ";
+            for (int j = 0; j < LR_RAW_FEATURES + 1; j++) {
+                std::cout << std::setw(10) << std::setprecision(4) << std::fixed
+                          << (-0.25 * total_diag_h[j]) << " ";
+            }
+            std::cout << std::endl;
+
+            std::cout << "diag(inv_diag_H): ";
             for (int j = 0; j < f; j++) {
                 std::cout << std::setw(10) << std::setprecision(4) << std::fixed
                           << pre.inv_diag_H[j * f + j] << " ";
@@ -217,6 +249,17 @@ public:
 
             // delta_w = inv_diag_H * g (diagonal mat-vec, HE-friendly)
             auto delta_w = matVecMult_HE16(pre.inv_diag_H, g);
+
+            // Debug: print intermediate values for iter 1, 2
+            if (verbose && iter < 2) {
+                std::cout << "\n  [Plaintext iter " << (iter+1) << "] 0.25*XtXw (first 8): ";
+                for (int j = 0; j < 8; j++) std::cout << std::setprecision(4) << (0.25 * XtXw[j]) << " ";
+                std::cout << "\n  [Plaintext iter " << (iter+1) << "] g (first 8): ";
+                for (int j = 0; j < 8; j++) std::cout << std::setprecision(4) << g[j] << " ";
+                std::cout << "\n  [Plaintext iter " << (iter+1) << "] delta_w (first 8): ";
+                for (int j = 0; j < 8; j++) std::cout << std::setprecision(4) << delta_w[j] << " ";
+                std::cout << std::endl;
+            }
 
             // w -= delta_w
             for (int j = 0; j < f; j++) {

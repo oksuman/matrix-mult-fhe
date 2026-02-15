@@ -98,21 +98,24 @@ protected:
 
     Ciphertext<DCRTPoly> sigmaTransform(const Ciphertext<DCRTPoly>& M, int d) {
         auto sigma_M = getZeroCiphertext(d * d);
-        int bs = (int)round(sqrt((double)d));
+
+        // For d=128, use bs=8, gs=16 instead of bs=11
+        int bs = (d == 128) ? 8 : (int)round(sqrt((double)d));
+        int gs = d / bs;
 
         std::vector<Ciphertext<DCRTPoly>> babySteps(bs);
         for (int i = 0; i < bs; i++) {
             babySteps[i] = rot.rotate(M, i);
         }
 
-        for (int i = 1; i < d - bs * (bs - 1); i++) {
+        for (int i = 1; i < d - bs * (gs - 1); i++) {
             Plaintext pmsk = m_cc->MakeCKKSPackedPlaintext(
                 generateSigmaMsk(-d + i, d), 1, 0, nullptr, d * d);
             m_cc->EvalAddInPlace(sigma_M,
                 m_cc->EvalMult(rot.rotate(M, i - d), pmsk));
         }
 
-        for (int i = -(bs - 1); i < bs; i++) {
+        for (int i = -(gs - 1); i < gs; i++) {
             auto tmp = getZeroCiphertext(d * d);
             for (int j = 0; j < bs; j++) {
                 auto msk = generateSigmaMsk(bs * i + j, d);
@@ -133,6 +136,7 @@ protected:
         int squareRootIntd = (int)squareRootd;
 
         if (squareRootIntd * squareRootIntd == d) {
+            // Perfect square case (d=64: bs=gs=8)
             std::vector<Ciphertext<DCRTPoly>> babySteps(squareRootIntd);
             for (int i = 0; i < squareRootIntd; i++) {
                 babySteps[i] = rot.rotate(M, d * i);
@@ -148,7 +152,37 @@ protected:
                 }
                 m_cc->EvalAddInPlace(tau_M, rot.rotate(tmp, squareRootIntd * d * i));
             }
+        } else if (d == 128) {
+            // Special case for d=128: bs=8, gs=16
+            int bs = 8;
+            int gs = 16;
+
+            std::vector<Ciphertext<DCRTPoly>> babySteps(bs);
+            for (int i = 0; i < bs; i++) {
+                babySteps[i] = rot.rotate(M, d * i);
+            }
+
+            // Handle extra diagonals: bs*(gs-1) to d-1 = 120 to 127
+            for (int i = 0; i < d - bs * (gs - 1); i++) {
+                Plaintext pmsk = m_cc->MakeCKKSPackedPlaintext(
+                    generateTauMsk(bs * (gs - 1) + i, d), 1, 0, nullptr, d * d);
+                m_cc->EvalAddInPlace(tau_M,
+                    m_cc->EvalMult(rot.rotate(M, (bs * (gs - 1) + i) * d), pmsk));
+            }
+
+            // Main loop: diagonals 0 to bs*(gs-1)-1 = 0 to 119
+            for (int i = 0; i < gs - 1; i++) {
+                auto tmp = getZeroCiphertext(d * d);
+                for (int j = 0; j < bs; j++) {
+                    auto msk = generateTauMsk(bs * i + j, d);
+                    msk = vectorRotate(msk, -bs * d * i);
+                    auto pmsk = m_cc->MakeCKKSPackedPlaintext(msk, 1, 0, nullptr, d * d);
+                    m_cc->EvalAddInPlace(tmp, m_cc->EvalMult(babySteps[j], pmsk));
+                }
+                m_cc->EvalAddInPlace(tau_M, rot.rotate(tmp, bs * d * i));
+            }
         } else {
+            // General non-perfect-square case
             int steps = (int)round(squareRootd);
 
             std::vector<Ciphertext<DCRTPoly>> babySteps(steps);
@@ -228,7 +262,11 @@ public:
     // ============ Public methods (called from main) ============
 
     Ciphertext<DCRTPoly> eval_transpose(Ciphertext<DCRTPoly> M, int d, int batchSize) {
-        int bs = (int)round(sqrt((double)d));
+        // Baby-step giant-step: bs * gs = d
+        // d=64: bs=8, gs=8
+        // d=128: bs=8, gs=16
+        int bs = 8;
+        int gs = d / bs;
 
         std::vector<Ciphertext<DCRTPoly>> babyStepsOfM(bs);
         for (int i = 0; i < bs; i++) {
@@ -239,11 +277,11 @@ public:
         auto M_transposed = m_cc->Encrypt(m_keyPair.publicKey,
             m_cc->MakeCKKSPackedPlaintext(zeroVec, 1, 0, nullptr, batchSize));
 
-        for (int i = -bs; i < bs; i++) {
+        for (int i = -gs; i < gs; i++) {
             auto tmp = m_cc->Encrypt(m_keyPair.publicKey,
                 m_cc->MakeCKKSPackedPlaintext(zeroVec, 1, 0, nullptr, batchSize));
 
-            int js = (i == -bs) ? 1 : 0;
+            int js = (i == -gs) ? 1 : 0;
             for (int j = js; j < bs; j++) {
                 int k = bs * i + j;
                 if (k >= d || k <= -d) continue;
@@ -375,9 +413,20 @@ public:
             for (size_t i = 1; i < chunkResults.size(); i++) {
                 m_cc->EvalAddInPlace(rebatched, chunkResults[i]);
             }
+
+            // For rowsPerChunk < f_tilde case, need more replication
+            // to fill largeDim*largeDim/2 slots before SetSlots
+            int s_large = largeDim * largeDim / (f_tilde * f_tilde);
+            for (int i = 1; i < s_large; i *= 2) {
+                auto rotated = rot.rotate(rebatched, -i * f_tilde * f_tilde);
+                m_cc->EvalAddInPlace(rebatched, rotated);
+            }
+
+            rebatched->SetSlots(num_slots);
+            return rebatched;
         }
 
-        // Replicate matrix s times
+        // Replicate matrix s times (for rowsPerChunk >= f_tilde case)
         for (int i = 1; i < s; i *= 2) {
             auto rotated = rot.rotate(rebatched, -i * f_tilde * f_tilde);
             m_cc->EvalAddInPlace(rebatched, rotated);
@@ -447,6 +496,136 @@ public:
             m_cc->EvalAddInPlace(product, rot.rotate(product, shift));
         }
         return product;
+    }
+
+    // ============ Simplified Fixed Hessian (public) ============
+
+    // Compute diagonal Hessian elements from encrypted X (64x64)
+    // H̃(j)(j) = -1/4 * Σᵢ(x_ij * Σₖ x_ik)
+    // Returns vector of 16 diagonal elements (in sampleDim-length ciphertext)
+    Ciphertext<DCRTPoly> computeDiagHessian_enc(const Ciphertext<DCRTPoly>& X,
+                                                 int sampleDim, int featureDim) {
+        int batchSize = sampleDim * sampleDim;
+
+        // 1. Column folding sum: position(i,0) = Σₖ x_ik (sum of row i)
+        auto colFolded = X->Clone();
+        for (int i = 1; i < sampleDim; i *= 2) {
+            m_cc->EvalAddInPlace(colFolded, rot.rotate(colFolded, i));
+        }
+
+        // 2. Mask column 0 only
+        std::vector<double> col0Mask(batchSize, 0.0);
+        for (int i = 0; i < sampleDim; i++) {
+            col0Mask[i * sampleDim] = 1.0;
+        }
+        auto masked = m_cc->EvalMult(colFolded,
+            m_cc->MakeCKKSPackedPlaintext(col0Mask, 1, 0, nullptr, batchSize));
+
+        // 3. Replicate column 0 to all columns
+        auto replicated = masked->Clone();
+        for (int i = 1; i < sampleDim; i *= 2) {
+            m_cc->EvalAddInPlace(replicated, rot.rotate(replicated, -i));
+        }
+
+        // 4. Hadamard(X, replicated): position(i,j) = x_ij * Σₖ x_ik
+        auto product = m_cc->EvalMultAndRelinearize(X, replicated);
+
+        // 5. Row folding sum: position(0,j) = Σᵢ(x_ij * Σₖ x_ik)
+        for (int i = 1; i < sampleDim; i *= 2) {
+            m_cc->EvalAddInPlace(product, rot.rotate(product, i * sampleDim));
+        }
+
+        // 6. Multiply by -1/4 to get H̃(j)(j)
+        auto diagH = m_cc->EvalMult(product, -0.25);
+
+        // Result is row-replicated (all rows same) in 128*128 slots.
+        // First SetSlots(256) to get 16x16 structure (rows 0 and 1 interleaved).
+        // At this point: slot 0~127 = row 0, slot 128~255 = row 1 (same values)
+        diagH->SetSlots(featureDim * featureDim);  // 256
+
+        // Mask to keep only slot 0~15 (first row, first 16 elements)
+        std::vector<double> featureMask(featureDim * featureDim, 0.0);
+        for (int j = 0; j < featureDim; j++) {
+            featureMask[j] = 1.0;
+        }
+        diagH = m_cc->EvalMult(diagH,
+            m_cc->MakeCKKSPackedPlaintext(featureMask, 1, 0, nullptr, featureDim * featureDim));
+
+        // Fold to make 16-replicated: [d0..d15, d0..d15, ...]
+        for (int i = featureDim; i < featureDim * featureDim; i *= 2) {
+            m_cc->EvalAddInPlace(diagH, rot.rotate(diagH, -i));
+        }
+        return diagH;
+    }
+
+    // Newton-Raphson iterations for diagonal inverse
+    // x_{n+1} = 2*x_n - a*x_n^2 (converges to 1/a)
+    // u0 is chosen based on expected value range of diag_H
+    // For normalized data [0,1] with N samples, diag_H[j] ≈ -N/16 to -N/4
+    Ciphertext<DCRTPoly> eval_diagonal_inverse_newton_raphson(
+                            const Ciphertext<DCRTPoly>& diagH,
+                            int numSamples, int featureDim, int sampleDim,
+                            int nrIterations = 2) {
+        // Estimate initial value u0
+        // diag_H[j] = -1/4 * Σᵢ(x_ij * Σₖ x_ik)
+        // For normalized [0,1] data: x_ij ∈ [0,1], Σₖ x_ik ∈ [0, d+1]
+        // Average-based estimation: E[diag_H] ≈ -N*(d+1)/16
+        // So u0 ≈ 1/E[diag_H] = -16/(N*(d+1))
+        int actualFeatures = LR_RAW_FEATURES + 1;  // 14
+        double u0 = -16.0 / (numSamples * actualFeatures);
+
+        if (m_verbose) {
+            std::cout << "  [Newton-Raphson] u0 = " << u0
+                      << " (N=" << numSamples << ", f=" << featureDim
+                      << ", iterations=" << nrIterations << ")" << std::endl;
+        }
+
+        // First iteration: x_1 = 2*u0 - diagH * u0^2
+        // diagH is now 16-replicated form (256 slots)
+        double twoU0 = 2.0 * u0;
+        double u0Sq = u0 * u0;
+
+        auto diagH_u0sq = m_cc->EvalMult(diagH, u0Sq);
+        int slots = featureDim * featureDim;  // 256
+        std::vector<double> twoU0Vec(slots, twoU0);
+        auto twoU0Ptx = m_cc->MakeCKKSPackedPlaintext(twoU0Vec, 1, 0, nullptr, slots);
+        auto invDiag = m_cc->EvalSub(twoU0Ptx, diagH_u0sq);
+
+        if (m_verbose) {
+            Plaintext ptxInv;
+            m_cc->Decrypt(m_keyPair.secretKey, invDiag, &ptxInv);
+            auto invVec = ptxInv->GetRealPackedValue();
+            std::cout << "  [Newton-Raphson iter 1] inv_diag (first 8): ";
+            for (int i = 0; i < std::min(8, featureDim); i++) {
+                std::cout << std::setprecision(6) << invVec[i] << " ";
+            }
+            std::cout << std::endl;
+        }
+
+        // Additional iterations: x_{n+1} = 2*x_n - diagH * x_n^2
+        for (int iter = 1; iter < nrIterations; iter++) {
+            // x_n^2
+            auto invDiagSq = m_cc->EvalMultAndRelinearize(invDiag, invDiag);
+            // diagH * x_n^2
+            auto diagH_xSq = m_cc->EvalMultAndRelinearize(diagH, invDiagSq);
+            // 2 * x_n
+            auto twoX = m_cc->EvalMult(invDiag, 2.0);
+            // x_{n+1} = 2*x_n - diagH * x_n^2
+            invDiag = m_cc->EvalSub(twoX, diagH_xSq);
+
+            if (m_verbose) {
+                Plaintext ptxInv;
+                m_cc->Decrypt(m_keyPair.secretKey, invDiag, &ptxInv);
+                auto invVec = ptxInv->GetRealPackedValue();
+                std::cout << "  [Newton-Raphson iter " << (iter + 1) << "] inv_diag (first 8): ";
+                for (int i = 0; i < std::min(8, featureDim); i++) {
+                    std::cout << std::setprecision(6) << invVec[i] << " ";
+                }
+                std::cout << std::endl;
+            }
+        }
+
+        return invDiag;
     }
 
     // ============ Debug Utilities (public) ============

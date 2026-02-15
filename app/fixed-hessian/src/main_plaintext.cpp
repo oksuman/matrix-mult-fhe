@@ -6,85 +6,78 @@
 #include <vector>
 
 int main() {
-    std::string trainPath = std::string(DATA_DIR) + "/heart_train.csv";
-    std::string testPath = std::string(DATA_DIR) + "/heart_test.csv";
+    std::string trainPath = (LR_BATCH_SIZE == 64)
+        ? std::string(DATA_DIR) + "/heart_train.csv"
+        : std::string(DATA_DIR) + "/heart_combined_128.csv";
+    std::string testPath64 = std::string(DATA_DIR) + "/heart_test.csv";
+    std::string testPath128 = std::string(DATA_DIR) + "/heart_test_128.csv";
 
     std::cout << "========================================" << std::endl;
     std::cout << " Logistic Regression (HE-friendly)" << std::endl;
     std::cout << " Plaintext Simulation — Heart Disease" << std::endl;
     std::cout << "========================================" << std::endl;
 
-    // Step 1: Load data
-    std::cout << "\n[1] Loading datasets..." << std::endl;
+    // Load datasets
     auto trainSet = LRDataEncoder::loadCSV(trainPath);
-    auto testSet = LRDataEncoder::loadCSV(testPath);
+    auto testSet64 = LRDataEncoder::loadCSV(testPath64);
+    auto testSet128 = LRDataEncoder::loadCSV(testPath128);
 
-    LRDataEncoder::printDatasetInfo(trainSet, "Raw Train");
-    LRDataEncoder::printDatasetInfo(testSet, "Raw Test");
-
-    // Step 2: Min-max normalization to [0,1] (on 13 raw features)
-    std::cout << "[2] Min-max normalization [0,1]..." << std::endl;
+    // Normalize
     LRDataEncoder::normalizeFeatures(trainSet);
-    LRDataEncoder::normalizeWithParams(testSet, trainSet);
+    LRDataEncoder::normalizeWithParams(testSet64, trainSet);
+    LRDataEncoder::normalizeWithParams(testSet128, trainSet);
 
-    // Step 3: Add bias column + padding (13 -> 16)
-    std::cout << "[3] Adding bias column and padding to 16 features..." << std::endl;
+    // Add bias and pad
     LRDataEncoder::addBiasAndPad(trainSet);
-    LRDataEncoder::addBiasAndPad(testSet);
+    LRDataEncoder::addBiasAndPad(testSet64);
+    LRDataEncoder::addBiasAndPad(testSet128);
 
-    LRDataEncoder::printDatasetInfo(trainSet, "Processed Train");
-    LRDataEncoder::printDatasetInfo(testSet, "Processed Test");
-
-    // 64 training samples = 1 batch of 64
     const int NUM_BATCHES = 1;
+    auto pre = LRHETrainer::precompute(trainSet, NUM_BATCHES, false);
 
-    // Step 4: Precompute (Xty, XtX, Hessian)
-    std::cout << "\n[4] Precomputing batch statistics..." << std::endl;
-    auto pre = LRHETrainer::precompute(trainSet, NUM_BATCHES, true);
+    std::vector<int> iters = {1, 2, 4, 8, 16, 32, 64};
 
-    // Step 5: Simplified Fixed Hessian
-    std::cout << "\n" << std::string(60, '=') << std::endl;
-    std::cout << " Simplified Fixed Hessian (Diagonal)" << std::endl;
-    std::cout << std::string(60, '=') << std::endl;
-
-    std::vector<int> simplifiedIters = {1};
-    for (int nIter : simplifiedIters) {
-        std::cout << "\n--- Simplified, iter=" << nIter << " ---" << std::endl;
-        auto result = LRHETrainer::trainSimplified(pre, nIter, true);
-
-        std::cout << "\nWeights: ";
-        for (int j = 0; j < LR_RAW_FEATURES; j++) {
-            std::cout << std::setw(8) << std::setprecision(4) << std::fixed << result.weights[j] << " ";
-        }
-        std::cout << "\nBias (w[13]): " << result.weights[LR_RAW_FEATURES] << std::endl;
-
-        std::cout << "\nInference on test set:" << std::endl;
-        LRHETrainer::inference(result, testSet, true);
+    // ============ 64 test samples ============
+    std::cout << "\n=== Simplified 64test ===" << std::endl;
+    for (int nIter : iters) {
+        auto result = LRHETrainer::trainSimplified(pre, nIter, false);
+        auto inf = LRHETrainer::inference(result, testSet64, false);
+        std::cout << "Test Accuracy:  " << std::fixed << std::setprecision(4)
+                  << (double)inf.correct / inf.total << std::endl;
     }
 
-    // Step 6: Fixed Hessian (Full matrix)
-    std::cout << "\n" << std::string(60, '=') << std::endl;
-    std::cout << " Fixed Hessian (Full 16x16 Matrix)" << std::endl;
-    std::cout << std::string(60, '=') << std::endl;
-
-    std::vector<int> fixedIters = {1};
-    for (int nIter : fixedIters) {
-        std::cout << "\n--- Fixed, iter=" << nIter << " ---" << std::endl;
-        auto result = LRHETrainer::trainFixed(pre, nIter, true);
-
-        std::cout << "\nWeights: ";
-        for (int j = 0; j < LR_RAW_FEATURES; j++) {
-            std::cout << std::setw(8) << std::setprecision(4) << std::fixed << result.weights[j] << " ";
-        }
-        std::cout << "\nBias (w[13]): " << result.weights[LR_RAW_FEATURES] << std::endl;
-
-        std::cout << "\nInference on test set:" << std::endl;
-        LRHETrainer::inference(result, testSet, true);
+    std::cout << "\n=== Full Fixed 64test ===" << std::endl;
+    for (int nIter : iters) {
+        auto result = LRHETrainer::trainFixed(pre, nIter, false);
+        auto inf = LRHETrainer::inference(result, testSet64, false);
+        std::cout << "Test Accuracy:  " << std::fixed << std::setprecision(4)
+                  << (double)inf.correct / inf.total << std::endl;
     }
 
-    std::cout << "\n========================================" << std::endl;
-    std::cout << " Done." << std::endl;
-    std::cout << "========================================" << std::endl;
+    // ============ 128 test samples ============
+    std::cout << "\n=== Simplified 128test ===" << std::endl;
+    for (int nIter : iters) {
+        auto result = LRHETrainer::trainSimplified(pre, nIter, (nIter <= 2));
+        auto inf = LRHETrainer::inference(result, testSet128, false);
+        std::cout << "Test Accuracy:  " << std::fixed << std::setprecision(4)
+                  << (double)inf.correct / inf.total << std::endl;
+        // Print weights for comparison with encrypted
+        if (nIter == 1) {
+            std::cout << "  Weights: ";
+            for (int j = 0; j < 14; j++) {
+                std::cout << std::setw(8) << std::setprecision(4) << result.weights[j] << " ";
+            }
+            std::cout << std::endl;
+        }
+    }
+
+    std::cout << "\n=== Full Fixed 128test ===" << std::endl;
+    for (int nIter : iters) {
+        auto result = LRHETrainer::trainFixed(pre, nIter, false);
+        auto inf = LRHETrainer::inference(result, testSet128, false);
+        std::cout << "Test Accuracy:  " << std::fixed << std::setprecision(4)
+                  << (double)inf.correct / inf.total << std::endl;
+    }
 
     return 0;
 }

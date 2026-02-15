@@ -24,9 +24,9 @@ struct LRDataset {
 // Constants for HE packing
 static const int LR_RAW_FEATURES = 13;        // original features (heart disease)
 static const int LR_FEATURES = 16;            // 13 features + 1 bias + 2 padding
-static const int LR_BATCH_SIZE = 64;          // samples per batch (B)
-static const int LR_MATRIX_DIM = 64;          // d: matrix dimension for 64x64 packing
-static const int LR_SLOTS = 4096;             // d*d = 64*64
+static const int LR_BATCH_SIZE = 128;         // samples per batch (B): 64 or 128
+static const int LR_MATRIX_DIM = LR_BATCH_SIZE;  // d: matrix dimension
+static const int LR_SLOTS = LR_MATRIX_DIM * LR_MATRIX_DIM;  // d*d
 
 class LRDataEncoder {
 public:

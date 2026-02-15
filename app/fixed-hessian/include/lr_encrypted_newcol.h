@@ -199,7 +199,7 @@ public:
             traceUpperBound = 64.0 * actualDim;
         }
 
-        auto alphaEnc = eval_scalar_inverse(traceEnc, traceUpperBound, 3, d * d);
+        auto alphaEnc = eval_scalar_inverse(traceEnc, traceUpperBound, 2, d * d);
 
         if (m_verbose) {
             Plaintext ptxTrace, ptxAlpha;

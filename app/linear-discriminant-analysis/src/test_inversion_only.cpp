@@ -130,7 +130,7 @@ int main() {
     std::cout << "\n--- Setting up CKKS Encryption ---" << std::endl;
 
     int maxDim = 64;  // AR24 uses d*d*s = 16*16*16 = 4096 slots, need rotation keys for 64*64
-    int multDepth = 29;
+    int multDepth = 28;
     uint32_t scalingModSize = 59;
     uint32_t firstModSize = 60;
 
@@ -155,7 +155,7 @@ int main() {
     cc->EvalRotateKeyGen(keyPair.secretKey, rotIndices);
 
     std::cout << "Setting up bootstrapping..." << std::flush;
-    std::vector<uint32_t> levelBudget = {4, 5};
+    std::vector<uint32_t> levelBudget = {4, 4};
     std::vector<uint32_t> bsgsDim = {0, 0};
     cc->EvalBootstrapSetup(levelBudget, bsgsDim, f_tilde * f_tilde);
     cc->EvalBootstrapKeyGen(keyPair.secretKey, f_tilde * f_tilde);

@@ -120,8 +120,6 @@ private:
     Ciphertext<DCRTPoly>
     eval_mult(const Ciphertext<DCRTPoly> &matrixA,
               const Ciphertext<DCRTPoly> &matrixB, int s1, int B1, int ng1, int nb1, int np1, int d){
-        std::ofstream logFile("intermediate_results.txt");
-
         auto matrixC = this->getZeroCiphertext(d)->Clone();
         Ciphertext<DCRTPoly> babyStepsOfA[nb1];
         std::vector<Ciphertext<DCRTPoly>> babyStepsOfB;
@@ -172,8 +170,6 @@ private:
                     m_cc->EvalAddInPlace(diagA, rot.rotate(tmp, k * nb1));
                 }
             }
-            // logIntermediateResult("diagA", diagA, logFile);
-
             m_cc->EvalAddInPlace(matrixC,
                                  m_cc->EvalMult(diagA, batched_rotations_B));
         }
@@ -193,7 +189,7 @@ private:
         auto trace = this->eval_trace(M, d, d*d);
         // upperBound = SAMPLE_DIM * FEATURE_DIM = 64 * 8 = 512
         double traceUpperBound = static_cast<double>(SAMPLE_DIM) * FEATURE_DIM;
-        auto trace_reciprocal = this->eval_scalar_inverse(trace, traceUpperBound, 3, d*d);
+        auto trace_reciprocal = this->eval_scalar_inverse(trace, traceUpperBound, SCALAR_INV_ITERATIONS, d*d);
 
 
         auto Y = this->m_cc->EvalMult(pI, trace_reciprocal);
@@ -204,38 +200,15 @@ private:
             Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar), s, B, ng, nb, np, d);
             A_bar = this->eval_mult(A_bar, A_bar, s, B, ng, nb, np, d);
             if ((int)Y->GetLevel() >= this->m_multDepth - 2) {
-                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
-                Y = m_cc->EvalBootstrap(Y, 2, 18);
+                A_bar = m_cc->EvalBootstrap(A_bar, 2);
+                Y = m_cc->EvalBootstrap(Y, 2);
             }
         }
         Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar), s, B, ng, nb, np, d);
         if ((int)Y->GetLevel() >= this->m_multDepth - 2) {
-                Y = m_cc->EvalBootstrap(Y, 2, 18);
+                Y = m_cc->EvalBootstrap(Y, 2);
         }
         return Y;
-    }
-    
-    void logIntermediateResult(const std::string& label, 
-                              const Ciphertext<DCRTPoly>& cipher,
-                              std::ofstream& outFile) {
-        Plaintext ptx;
-        m_cc->Decrypt(this->m_keyPair.secretKey, cipher, &ptx);
-        std::vector<double> result_vec = ptx->GetRealPackedValue();
-        
-        outFile << "\n=== " << label << " ===\n";
-        std::cout << "\n=== " << label << " ===\n";
-        outFile << "Number of slots: " << cipher->GetSlots() << "\n";
-        outFile << "First 10 elements: \n";
-        for (int i = 0; i < std::min(20, (int)result_vec.size()); i++) {
-            outFile << std::setprecision(6) << std::fixed 
-                   << result_vec[i] << " ";
-        }
-        for (int i = 0; i < std::min(20, (int)result_vec.size()); i++) {
-            std::cout << std::setprecision(6) << std::fixed 
-                   << result_vec[i] << " ";
-        }
-        std::cout << "\n";
-        outFile << "\n";
     }
 
 public:
@@ -303,7 +276,7 @@ public:
         int nb2 = 4;
         int np2 = 2;
         auto step2_start = high_resolution_clock::now();
-        auto inv_XtX = eval_inverse(rebatched_XtX, s2, B2, ng2, nb2, np2, FEATURE_DIM, 18);
+        auto inv_XtX = eval_inverse(rebatched_XtX, s2, B2, ng2, nb2, np2, FEATURE_DIM, getInversionIterations(FEATURE_DIM));
         auto step2_end = high_resolution_clock::now();
 
         if (m_verbose) {

@@ -1,19 +1,22 @@
 #!/bin/bash
 
-echo "Running matrix multiplication benchmarks..."
+# Single-thread mode for reproducible benchmarks
+export OMP_NUM_THREADS=1
+
+echo "Running matrix multiplication benchmarks (single-thread)..."
 sleep 2
 
 run_benchmark() {
     local algo=$1
     echo "Running $algo..."
-    
+
     # Add cooling period
     echo "System cooling before $algo..."
     sleep 45
     sync
-    
+
     # Run benchmark with direct console output
-    ./$algo | tee >(grep "BM_" | grep -v "^Running" >> benchmark_results.txt)
+    OMP_NUM_THREADS=1 ./$algo | tee >(grep "BM_" | grep -v "^Running" >> benchmark_results.txt)
     
     if [ ${PIPESTATUS[0]} -ne 0 ]; then
         echo "Error running $algo"

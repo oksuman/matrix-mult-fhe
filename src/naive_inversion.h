@@ -85,12 +85,28 @@ public:
         return C;
     }
 
+    // Scalar inverse using Newton-Raphson iteration (batchSize=1)
+    Ciphertext<DCRTPoly> eval_scalar_inverse(const Ciphertext<DCRTPoly>& t,
+                                              double upperBound,
+                                              int iterations) {
+        double x0 = 1.0 / upperBound;
+        std::vector<double> x0_vec(1, x0);
+        auto x = m_enc->encryptInput(x0_vec);
+        auto t_bar = m_cc->EvalSub(1.0, m_cc->EvalMult(t, x0));
+
+        for (int i = 0; i < iterations; i++) {
+            x = m_cc->EvalMult(x, m_cc->EvalAdd(t_bar, 1.0));
+            t_bar = m_cc->EvalMult(t_bar, t_bar);
+        }
+        return x;
+    }
+
     std::vector<Ciphertext<DCRTPoly>>
-    inverseMatrix(const std::vector<Ciphertext<DCRTPoly>>& M, int iterations) {
+    inverseMatrix(const std::vector<Ciphertext<DCRTPoly>>& M, int iterations, int scalar_inv_iter = 2) {
         auto M_transposed = transpose(M);
         auto MM_transposed = matrixMultiply(M, M_transposed);
         auto tr = trace(MM_transposed);
-        auto trace_reciprocal = m_cc->EvalDivide(tr, d, d * d, 50);
+        auto trace_reciprocal = eval_scalar_inverse(tr, d * d, scalar_inv_iter);
         
         std::vector<Ciphertext<DCRTPoly>> Y(d * d);
         for(int i = 0; i < d * d; i++) {

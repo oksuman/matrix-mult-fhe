@@ -7,14 +7,14 @@
 
 int main() {
 #ifdef DATASET_DIABETES
-    std::string trainPath = std::string(DATA_DIR) + "/diabetes_train_64.csv";
-    std::string testPath = std::string(DATA_DIR) + "/diabetes_test_256.csv";
+    std::string trainPath = std::string(DATA_DIR) + "/diabetes_train.csv";
+    std::string testPath = std::string(DATA_DIR) + "/diabetes_test.csv";
     std::string datasetName = "Diabetes (8 features, 64 train)";
 #else
     std::string trainPath = (LR_BATCH_SIZE == 64)
-        ? std::string(DATA_DIR) + "/heart_train.csv"
-        : std::string(DATA_DIR) + "/heart_combined_128.csv";
-    std::string testPath = std::string(DATA_DIR) + "/heart_test_128.csv";
+        ? std::string(DATA_DIR) + "/heart_train_64.csv"
+        : std::string(DATA_DIR) + "/heart_train_128.csv";
+    std::string testPath = std::string(DATA_DIR) + "/heart_test.csv";
     std::string datasetName = "Heart Disease (13 features, 128 train)";
 #endif
 

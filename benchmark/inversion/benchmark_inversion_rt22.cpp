@@ -1,60 +1,38 @@
-#include "benchmark/benchmark.h"
+// Matrix Inversion Benchmark - RT22 Algorithm
+// Measures: Time (seconds) and Accuracy (Frobenius norm, log2 error)
+
 #include "matrix_inversion_algo.h"
 #include "matrix_utils.h"
+#include "../benchmark_config.h"
+#include <iostream>
+#include <iomanip>
+#include <chrono>
+#include <random>
+#include <vector>
 
-const int ITERATION_COUNT = 1;
+using namespace lbcrypto;
+using namespace BenchmarkConfig;
 
 template <int d>
-static void BM_RT22_Inversion(benchmark::State& state) {
-    int multDepth;
-    uint32_t scaleModSize;
-    uint32_t firstModSize;
-    int r;
+void runInversionBenchmark(int numRuns = 1) {
+    int scalarInvIter = getScalarInvIterations(d);
+    std::cout << "\n========== RT22 Inversion d=" << d << " (scalar_iter=" << scalarInvIter << ") ==========" << std::endl;
 
-    std::vector<uint32_t> levelBudget;
-    std::vector<uint32_t> bsgsDim;
+    // Unified parameters
+    int r = getInversionIterations(d);
+    int multDepth = MULT_DEPTH;
+    uint32_t scaleModSize = 59;
+    uint32_t firstModSize = 60;
+    std::vector<uint32_t> levelBudget = {4, 4};
+    std::vector<uint32_t> bsgsDim = {0, 0};
 
     CCParams<CryptoContextCKKSRNS> parameters;
-
-    switch (d) {
-        case 4:
-            r = 18;
-            multDepth = 2 * r + 12;
-            scaleModSize = 50;
-            break;
-        case 8:
-            r = 21;
-            multDepth = 29;
-            scaleModSize = 59;
-            firstModSize = 60;
-            parameters.SetFirstModSize(firstModSize);
-            levelBudget = {4, 5};
-            bsgsDim = {0, 0};
-            break;
-        case 16:
-            r = 25;
-            multDepth = 29;
-            scaleModSize = 59;
-            firstModSize = 60;
-            parameters.SetFirstModSize(firstModSize);
-            levelBudget = {4, 5};
-            bsgsDim = {0, 0};
-            break;
-        case 32:
-            r = 28;
-            multDepth = 29;
-            scaleModSize = 59;
-            firstModSize = 60;
-            parameters.SetFirstModSize(firstModSize);
-            levelBudget = {4, 5};
-            bsgsDim = {0, 0};
-            break;
-        default:
-            r = -1;
-        }
     parameters.SetMultiplicativeDepth(multDepth);
     parameters.SetScalingModSize(scaleModSize);
-    parameters.SetBatchSize(d * d * d);
+    parameters.SetFirstModSize(firstModSize);
+
+    int batchSize = d * d * d;
+    parameters.SetBatchSize(batchSize);
     parameters.SetSecurityLevel(HEStd_128_classic);
 
     auto cc = GenCryptoContext(parameters);
@@ -65,14 +43,12 @@ static void BM_RT22_Inversion(benchmark::State& state) {
 
     auto keyPair = cc->KeyGen();
 
-    if (d >= 8) {
-        cc->Enable(FHE);
-        cc->EvalBootstrapSetup(levelBudget, bsgsDim, d * d);
-        cc->EvalBootstrapKeyGen(keyPair.secretKey, d * d); 
-    }
+    cc->Enable(FHE);
+    cc->EvalBootstrapSetup(levelBudget, bsgsDim, d * d);
+    cc->EvalBootstrapKeyGen(keyPair.secretKey, d * d);
 
     std::vector<int> rotations;
-    for (int i = 1; i < d * d * d; i *= 2) {
+    for (int i = 1; i < batchSize; i *= 2) {
         rotations.push_back(i);
         rotations.push_back(-i);
     }
@@ -81,38 +57,89 @@ static void BM_RT22_Inversion(benchmark::State& state) {
 
     auto enc = std::make_shared<Encryption>(cc, keyPair.publicKey);
     auto matInv = std::make_unique<MatrixInverse_RT22<d>>(
-        enc, cc, keyPair.publicKey, rotations, r, multDepth);
+        enc, cc, keyPair.publicKey, rotations, r, multDepth, scalarInvIter);
 
-    std::vector<double> matrix(d * d);
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<double> dis(-1.0, 1.0);
-    do {
-        for (size_t i = 0; i < d * d; i++) {
-            matrix[i] = dis(gen);
-        }
-    } while (!utils::isInvertible(matrix, d));
-
-    auto enc_matrix = enc->encryptInput(matrix);
-    
     std::cout << "Ring Dimension: " << cc->GetRingDimension() << std::endl;
+    std::cout << "Iterations: " << r << std::endl;
+    std::cout << "Mult Depth: " << multDepth << std::endl;
 
-    for (auto _ : state) {
+    double totalTime = 0.0;
+    ErrorMetrics avgError;
+    std::vector<double> times;
+
+    for (int run = 0; run < numRuns; run++) {
+        // Generate random invertible matrix with different seed per run
+        std::vector<double> matrix(d * d);
+        std::mt19937 gen(42 + run);  // Different seed per trial
+        std::uniform_real_distribution<double> dis(-1.0, 1.0);
+        do {
+            for (int i = 0; i < d * d; i++) {
+                matrix[i] = dis(gen);
+            }
+        } while (!utils::isInvertible(matrix, d));
+
+        auto groundTruth = computeGroundTruthInverse(matrix, d);
+        auto enc_matrix = enc->encryptInput(matrix);
+
         auto start = std::chrono::high_resolution_clock::now();
         auto result = matInv->eval_inverse(enc_matrix);
         auto end = std::chrono::high_resolution_clock::now();
-        
+
         double duration = std::chrono::duration<double>(end - start).count();
-        state.counters["Time"] = duration;
-        state.counters["MatrixSize"] = d;
-        
-        benchmark::DoNotOptimize(result);
+        times.push_back(duration);
+        totalTime += duration;
+
+        Plaintext ptx;
+        cc->Decrypt(keyPair.secretKey, result, &ptx);
+        ptx->SetLength(d * d);
+        std::vector<double> computed = ptx->GetRealPackedValue();
+        computed.resize(d * d);
+
+        ErrorMetrics error;
+        error.compute(groundTruth, computed, d);
+        if (run == 0) avgError = error;
+
+        std::cout << "  Run " << (run + 1) << ": " << std::fixed << std::setprecision(2)
+                  << duration << "s, log2(err)=" << std::setprecision(1) << error.log2FrobError << std::endl;
     }
+
+    double avgTime = totalTime / numRuns;
+    double stdDev = 0.0;
+    for (double t : times) stdDev += (t - avgTime) * (t - avgTime);
+    stdDev = std::sqrt(stdDev / numRuns);
+
+    std::cout << "\n--- Summary (d=" << d << ") ---" << std::endl;
+    std::cout << "Time: " << std::fixed << std::setprecision(2) << avgTime << "s";
+    if (numRuns > 1) std::cout << " ± " << stdDev << "s";
+    std::cout << std::endl;
+    avgError.print();
 }
 
-BENCHMARK_TEMPLATE(BM_RT22_Inversion, 4)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
-BENCHMARK_TEMPLATE(BM_RT22_Inversion, 8)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
-BENCHMARK_TEMPLATE(BM_RT22_Inversion, 16)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
-BENCHMARK_TEMPLATE(BM_RT22_Inversion, 32)->Unit(benchmark::kSecond)->UseRealTime()->Iterations(ITERATION_COUNT);
+int main(int argc, char* argv[]) {
+    int numRuns = 1;
+    if (argc > 1) numRuns = std::atoi(argv[1]);
 
-BENCHMARK_MAIN();
+    std::cout << "============================================" << std::endl;
+    std::cout << "  Matrix Inversion Benchmark - RT22" << std::endl;
+    std::cout << "============================================" << std::endl;
+    std::cout << "Runs per dimension: " << numRuns << std::endl;
+
+    #ifdef _OPENMP
+    // omp_set_num_threads(1);  // Commented for multi-thread quick test
+    std::cout << "OpenMP Threads: " << omp_get_max_threads() << std::endl;
+    #else
+    std::cout << "OpenMP: Not enabled (single thread)" << std::endl;
+    #endif
+
+    runInversionBenchmark<4>(numRuns);
+    runInversionBenchmark<8>(numRuns);
+    runInversionBenchmark<16>(numRuns);
+    runInversionBenchmark<32>(numRuns);
+    // RT22 doesn't support d=64 (batchSize=d^3 constraint)
+
+    std::cout << "\n============================================" << std::endl;
+    std::cout << "  Benchmark Complete" << std::endl;
+    std::cout << "============================================" << std::endl;
+
+    return 0;
+}

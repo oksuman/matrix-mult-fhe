@@ -21,6 +21,10 @@
 #include <filesystem>
 #include <ctime>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 using namespace lbcrypto;
 
 // ============ Configuration ============
@@ -359,6 +363,10 @@ BenchmarkResult runBenchmark(
 
 // ============ Main ============
 int main() {
+    #ifdef _OPENMP
+    omp_set_num_threads(1);
+    #endif
+
     std::cout << "\n";
     std::cout << "###############################################################\n";
     std::cout << "#                                                             #\n";
@@ -401,7 +409,7 @@ int main() {
     // Setup encryption
     std::cout << "\n--- Setting up CKKS Encryption ---" << std::endl;
     int maxDim = std::max(trainSet.paddedSamples, trainSet.paddedFeatures);
-    int multDepth = 29;
+    int multDepth = 28;
     uint32_t scalingModSize = 59;
     uint32_t firstModSize = 60;
 
@@ -429,7 +437,7 @@ int main() {
     std::cout << " Done." << std::endl;
 
     std::cout << "Setting up bootstrapping..." << std::flush;
-    std::vector<uint32_t> levelBudget = {4, 5};
+    std::vector<uint32_t> levelBudget = {4, 4};
     std::vector<uint32_t> bsgsDim = {0, 0};
     cc->EvalBootstrapSetup(levelBudget, bsgsDim, HD_PADDED_FEATURE * HD_PADDED_FEATURE);
     cc->EvalBootstrapKeyGen(keyPair.secretKey, HD_PADDED_FEATURE * HD_PADDED_FEATURE);

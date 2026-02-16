@@ -71,6 +71,26 @@ class MatrixOperationBase {
         return v;
     }
 
+    // Scalar inverse using Newton-Raphson iteration: 1/t with upper bound
+    // upperBound: upper bound of trace value (typically d*d for matrices in [-1,1])
+    // iterations: number of Newton-Raphson iterations (default 2)
+    // batchSize: slot count for the ciphertext
+    Ciphertext<DCRTPoly> eval_scalar_inverse(const Ciphertext<DCRTPoly>& t,
+                                              double upperBound,
+                                              int iterations,
+                                              int batchSize) {
+        double x0 = 1.0 / upperBound;
+        std::vector<double> x0_vec(batchSize, x0);
+        auto x = m_enc->encryptInput(x0_vec);
+        auto t_bar = m_cc->EvalSub(1.0, m_cc->EvalMult(t, x0));
+
+        for (int i = 0; i < iterations; i++) {
+            x = m_cc->EvalMult(x, m_cc->EvalAdd(t_bar, 1.0));
+            t_bar = m_cc->EvalMult(t_bar, t_bar);
+        }
+        return x;
+    }
+
     Ciphertext<lbcrypto::DCRTPoly> columnShifting(const Ciphertext<DCRTPoly> M,
                                                   int l) {
         Ciphertext<DCRTPoly> shiftResult;
@@ -108,36 +128,44 @@ class MatrixOperationBase {
     }
 
     Ciphertext<DCRTPoly> eval_transpose(Ciphertext<DCRTPoly> M) {
-        // initializatino (i=0)
-        auto p = m_cc->MakeCKKSPackedPlaintext(generateTransposeMsk(0));
-        auto M_transposed = m_cc->EvalMult(M, p);
+        constexpr int bs = (d == 4) ? 2 : (d == 8) ? 3 : (d == 16) ? 4 : 8;
+        constexpr int batchSize = d * d;
 
-        // case i > 0
-        for (int i = 1; i < d; i++) {
-            auto p = m_cc->MakeCKKSPackedPlaintext(generateTransposeMsk(i));
-            m_cc->EvalAddInPlace(M_transposed,
-                                 m_cc->EvalMult(rot.rotate(M, (d - 1) * i), p));
+        std::vector<Ciphertext<DCRTPoly>> babyStepsOfM(bs);
+        for (int i = 0; i < bs; i++) {
+            babyStepsOfM[i] = rot.rotate(M, (d - 1) * i);
         }
-        // case i < 0
-        for (int i = -1; i > -d; i--) {
-            auto p = m_cc->MakeCKKSPackedPlaintext(generateTransposeMsk(i));
-            m_cc->EvalAddInPlace(M_transposed,
-                                 m_cc->EvalMult(rot.rotate(M, (d - 1) * i), p));
+
+        std::vector<double> zeroVec(batchSize, 0.0);
+        auto pZero = m_cc->MakeCKKSPackedPlaintext(zeroVec, 1, 0, nullptr, batchSize);
+        auto M_transposed = m_cc->Encrypt(m_PublicKey, pZero);
+
+        for (int i = -bs; i < bs; i++) {
+            auto tmp = m_cc->Encrypt(m_PublicKey, pZero);
+            int js = (i == -bs) ? 1 : 0;
+            for (int j = js; j < bs; j++) {
+                int k = bs * i + j;
+                if (k >= d || k <= -d) continue;
+                auto vmsk = generateTransposeMsk(k);
+                vmsk = vectorRotate(vmsk, -bs * (d - 1) * i);
+                auto pmsk = m_cc->MakeCKKSPackedPlaintext(vmsk, 1, 0, nullptr, batchSize);
+                m_cc->EvalAddInPlace(tmp, m_cc->EvalMult(babyStepsOfM[j], pmsk));
+            }
+            int rotAmount = bs * (d - 1) * i;
+            rotAmount = ((rotAmount % batchSize) + batchSize) % batchSize;
+            if (rotAmount != 0) tmp = rot.rotate(tmp, rotAmount);
+            m_cc->EvalAddInPlace(M_transposed, tmp);
         }
 
         return M_transposed;
     }
 
     Ciphertext<DCRTPoly> eval_trace(Ciphertext<DCRTPoly> M, int batchSize) {
-        /*
-         * batch size : d*d or d*d*d
-         * Only RT22 uses d*d*d batch
-         */
         std::vector<double> msk(batchSize, 0);
         for (int i = 0; i < d * d; i += (d + 1)) {
             msk[i] = 1;
         }
-        auto trace = m_cc->EvalMult(M, m_cc->MakeCKKSPackedPlaintext(msk));
+        auto trace = m_cc->EvalMult(M, m_cc->MakeCKKSPackedPlaintext(msk, 1, 0, nullptr, batchSize));
 
         // Require EvalSum key
         // trace_M = m_cc->EvalSum(trace_M, d*d);

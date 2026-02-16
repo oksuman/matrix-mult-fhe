@@ -7,6 +7,7 @@
 #include "lr_encrypted_ar24.h"
 #include "lr_encrypted_newcol.h"
 #include "encryption.h"
+#include "../../common/evaluation_metrics.h"
 #include <openfhe.h>
 #include <iostream>
 #include <iomanip>
@@ -14,6 +15,10 @@
 #include <string>
 #include <vector>
 #include <cmath>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 using namespace lbcrypto;
 
@@ -28,12 +33,12 @@ std::vector<int> generateRotationIndices(int batchSize) {
 }
 
 // Perform plaintext inference using decrypted weights
-void performInference(const std::vector<double>& weights,
-                      const LRDataset& testSet,
-                      const std::string& methodName) {
-    int correct = 0;
-    int total = testSet.numSamples;
-    int tp = 0, fp = 0, fn = 0, tn = 0;
+// Returns ClassificationResult for comparison
+EvalMetrics::ClassificationResult performInference(const std::vector<double>& weights,
+                                                    const LRDataset& testSet,
+                                                    const std::string& methodName) {
+    EvalMetrics::ClassificationResult result;
+    result.total = testSet.numSamples;
 
     for (size_t i = 0; i < testSet.numSamples; i++) {
         double z = 0.0;
@@ -45,31 +50,28 @@ void performInference(const std::vector<double>& weights,
         int pred_label = (pred_prob >= 0.5) ? 1 : -1;
         int true_label = testSet.labels[i];
 
-        if (pred_label == true_label) correct++;
-        if (pred_label == 1 && true_label == 1) tp++;
-        else if (pred_label == 1 && true_label == -1) fp++;
-        else if (pred_label == -1 && true_label == 1) fn++;
-        else tn++;
+        if (pred_label == true_label) result.correct++;
+        if (pred_label == 1 && true_label == 1) result.tp++;
+        else if (pred_label == 1 && true_label == -1) result.fp++;
+        else if (pred_label == -1 && true_label == 1) result.fn++;
+        else result.tn++;
     }
 
-    double accuracy = 100.0 * correct / total;
-    double precision = (tp + fp > 0) ? 100.0 * tp / (tp + fp) : 0.0;
-    double recall = (tp + fn > 0) ? 100.0 * tp / (tp + fn) : 0.0;
-    double f1 = (precision + recall > 0) ? 2.0 * precision * recall / (precision + recall) : 0.0;
-
-    std::cout << "\n  [" << methodName << "] Inference Results:" << std::endl;
-    std::cout << "    Correct: " << correct << " / " << total << std::endl;
-    std::cout << "    Accuracy:  " << std::fixed << std::setprecision(2) << accuracy << "%" << std::endl;
-    std::cout << "    Precision: " << precision << "%" << std::endl;
-    std::cout << "    Recall:    " << recall << "%" << std::endl;
-    std::cout << "    F1 Score:  " << f1 << "%" << std::endl;
-    std::cout << "    (TP=" << tp << " FP=" << fp << " FN=" << fn << " TN=" << tn << ")" << std::endl;
+    result.print(methodName);
+    return result;
 }
+
+// Result structure for algorithm comparison
+struct FHExperimentResult {
+    EvalMetrics::ClassificationResult classResult;
+    std::chrono::duration<double> totalTime{0};
+    bool valid = false;
+};
 
 // Run Fixed Hessian training with a given inversion algorithm
 // Measures TOTAL time independently: from encrypted X,y to final weights
 template<typename InvAlgorithm>
-void runFixedHessian(const std::string& algorithmName,
+FHExperimentResult runFixedHessian(const std::string& algorithmName,
                      std::shared_ptr<Encryption> enc,
                      CryptoContext<DCRTPoly> cc,
                      KeyPair<DCRTPoly> keyPair,
@@ -83,11 +85,12 @@ void runFixedHessian(const std::string& algorithmName,
                      int inversionIterations,
                      bool verbose) {
     using namespace std::chrono;
+    FHExperimentResult expResult;
 
-    std::cout << "\n" << std::string(60, '=') << std::endl;
-    std::cout << "  Fixed Hessian with " << algorithmName << " Matrix Inversion" << std::endl;
-    std::cout << "  Bootstrapping: " << (useBootstrapping ? "ENABLED" : "DISABLED") << std::endl;
-    std::cout << std::string(60, '=') << std::endl;
+    EvalMetrics::printExperimentHeader("Fixed Hessian", algorithmName,
+        LR_BATCH_SIZE, testSet.numSamples, LR_RAW_FEATURES);
+    std::cout << "  Bootstrapping:    " << (useBootstrapping ? "ENABLED" : "DISABLED") << std::endl;
+    std::cout << std::string(60, '-') << std::endl;
 
     InvAlgorithm algo(enc, cc, keyPair, rotIndices, multDepth, useBootstrapping);
     algo.setVerbose(verbose);
@@ -293,21 +296,27 @@ void runFixedHessian(const std::string& algorithmName,
     }
     std::cout << "\n  Bias (w[" << LR_RAW_FEATURES << "]): " << weights[LR_RAW_FEATURES] << std::endl;
 
-    performInference(weights, testSet, algorithmName + " Fixed Hessian");
+    expResult.classResult = performInference(weights, testSet, algorithmName);
 
     // ========== End TOTAL time measurement ==========
     auto totalEnd = high_resolution_clock::now();
-    std::chrono::duration<double> totalTime = totalEnd - totalStart;
+    expResult.totalTime = totalEnd - totalStart;
+    expResult.valid = true;
 
-    std::cout << "\n--- " << algorithmName << " Timing Summary ---" << std::endl;
-    std::cout << "  X^T y:            " << std::setprecision(3) << xtyTime.count() << " s" << std::endl;
-    std::cout << "  X^T:              " << xtTime.count() << " s" << std::endl;
-    std::cout << "  X^T X:            " << xtxTime.count() << " s" << std::endl;
-    std::cout << "  Rebatch:          " << rbTime.count() << " s" << std::endl;
-    std::cout << "  Inversion:        " << invTime.count() << " s" << std::endl;
-    std::cout << "  Gradient+update:  " << gradTime.count() << " s" << std::endl;
-    std::cout << "  ---------------------------------" << std::endl;
-    std::cout << "  TOTAL:            " << totalTime.count() << " s" << std::endl;
+    // Print timing summary using unified format
+    EvalMetrics::TimingResult timing;
+    timing.step1 = xtyTime + xtTime + xtxTime + rbTime;
+    timing.step2 = invTime;
+    timing.step3 = gradTime;
+    timing.total = expResult.totalTime;
+    timing.step1Name = "Precomputation";
+    timing.step2Name = "Matrix inversion";
+    timing.step3Name = "Gradient+update";
+    timing.print(algorithmName);
+
+    EvalMetrics::printExperimentFooter();
+
+    return expResult;
 }
 
 // Run Simplified Fixed Hessian (diagonal inverse with Newton-Raphson, fully encrypted)
@@ -668,10 +677,14 @@ void runSimplifiedHessian(std::shared_ptr<Encryption> enc,
 }
 
 int main(int argc, char* argv[]) {
+    #ifdef _OPENMP
+    omp_set_num_threads(1);
+    #endif
+
     bool verbose = true;
     bool useBootstrapping = true;
-    std::string algorithm = "none";  // "ar24", "newcol", "both", "none", "simplified"
-    int inversionIterations = 25;    // For AR24/NewCol matrix inversion
+    std::string algorithm = "both";  // "ar24", "newcol", "both", "simplified"
+    int inversionIterations = getFHInversionIterations(LR_FEATURES);  // For AR24/NewCol matrix inversion
 #ifdef DATASET_DIABETES
     int simplifiedIterations = 256;  // Diabetes: slower convergence, needs more iterations
 #else
@@ -712,13 +725,13 @@ int main(int argc, char* argv[]) {
 
     // ========== Step 1: Load and preprocess data ==========
 #ifdef DATASET_DIABETES
-    std::string trainPath = std::string(DATA_DIR) + "/diabetes_train_64.csv";
-    std::string testPath = std::string(DATA_DIR) + "/diabetes_test_256.csv";
+    std::string trainPath = std::string(DATA_DIR) + "/diabetes_train.csv";
+    std::string testPath = std::string(DATA_DIR) + "/diabetes_test.csv";
 #else
     std::string trainPath = (LR_BATCH_SIZE == 64)
-        ? std::string(DATA_DIR) + "/heart_train.csv"
-        : std::string(DATA_DIR) + "/heart_combined_128.csv";
-    std::string testPath = std::string(DATA_DIR) + "/heart_test_128.csv";
+        ? std::string(DATA_DIR) + "/heart_train_64.csv"
+        : std::string(DATA_DIR) + "/heart_train_128.csv";
+    std::string testPath = std::string(DATA_DIR) + "/heart_test.csv";
 #endif
 
     std::cout << "\n[1] Loading datasets..." << std::endl;
@@ -749,15 +762,10 @@ int main(int argc, char* argv[]) {
     int multDepth;
     uint32_t scalingModSize, firstModSize;
 
-    if (useBootstrapping) {
-        multDepth = 29;
-        scalingModSize = 59;
-        firstModSize = 60;
-    } else {
-        multDepth = 30;
-        scalingModSize = 50;
-        firstModSize = 50;
-    }
+    // Unified parameters (bootstrapping always enabled for benchmarks)
+    multDepth = 28;
+    scalingModSize = 59;
+    firstModSize = 60;
 
     int sampleDim = LR_MATRIX_DIM;
     int batchSize = sampleDim * sampleDim;
@@ -827,24 +835,40 @@ int main(int argc, char* argv[]) {
     // Each algorithm measures its TOTAL time from encrypted X,y to final weights
     // No shared precomputation - each algorithm computes everything independently
 
+    FHExperimentResult ar24Result, newcolResult;
+
     // ========== Run Fixed Hessian with AR24 ==========
     if (algorithm == "ar24" || algorithm == "both") {
-        runFixedHessian<LR_AR24>(
+        ar24Result = runFixedHessian<LR_AR24>(
             "AR24", enc, cc, keyPair, rotIndices, multDepth, useBootstrapping,
             X_enc, y_enc, testSet, pre, inversionIterations, verbose);
     }
 
     // ========== Run Fixed Hessian with NewCol ==========
     if (algorithm == "newcol" || algorithm == "both") {
-        runFixedHessian<LR_NewCol>(
+        newcolResult = runFixedHessian<LR_NewCol>(
             "NewCol", enc, cc, keyPair, rotIndices, multDepth, useBootstrapping,
             X_enc, y_enc, testSet, pre, inversionIterations, verbose);
     }
 
     // ========== Run Simplified Fixed Hessian ==========
-    if (algorithm == "simplified" || algorithm == "none") {
+    if (algorithm == "simplified") {
         runSimplifiedHessian(enc, cc, keyPair, rotIndices, multDepth,
                              X_enc, y_enc, testSet, pre, simplifiedIterations, verbose);
+    }
+
+    // Print comparison summary if both algorithms were run
+    if (ar24Result.valid && newcolResult.valid) {
+        EvalMetrics::TimingResult ar24Timing, newcolTiming;
+        ar24Timing.total = ar24Result.totalTime;
+        newcolTiming.total = newcolResult.totalTime;
+
+        EvalMetrics::printComparisonSummary(
+            "Fixed Hessian",
+            ar24Timing, newcolTiming,
+            ar24Result.classResult.f1Score(),
+            newcolResult.classResult.f1Score(),
+            "F1 Score");
     }
 
     std::cout << "\n" << std::string(60, '=') << std::endl;

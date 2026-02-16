@@ -1,48 +1,63 @@
 #!/bin/bash
 
-echo "Running matrix squaring benchmarks..."
-sleep 2
+# Single-thread mode for reproducible benchmarks
+export OMP_NUM_THREADS=1
+
+NUM_RUNS=${1:-1}
+
+echo "============================================"
+echo "  Matrix Squaring Benchmarks"
+echo "============================================"
+echo "Runs per dimension: $NUM_RUNS"
+echo "Single-thread mode enabled"
+echo ""
 
 run_benchmark() {
     local algo=$1
-    echo "Running $algo..."
-    
+    echo ""
+    echo "========================================"
+    echo "  Running $algo"
+    echo "========================================"
+
     # Cooling period before benchmark
-    echo "System cooling before $algo..."
+    echo "System cooling (45s)..."
     sleep 45
     sync
-    
-    # Run benchmark and capture output
-    ./$algo | tee >(grep "BM_" | grep -v "^Running" >> squaring_benchmark_results.txt)
-    
+
+    # Run benchmark
+    OMP_NUM_THREADS=1 ./$algo $NUM_RUNS 2>&1 | tee -a squaring_benchmark_results.txt
+
     if [ ${PIPESTATUS[0]} -ne 0 ]; then
         echo "Error running $algo"
         return 1
     fi
-    
+
     # Cooling period after benchmark
-    echo "System cooling after $algo..."
+    echo ""
+    echo "Cooling down (45s)..."
     sleep 45
-    
-    echo "" >> squaring_benchmark_results.txt
 }
 
 # List of squaring benchmark executables
 SQUARING_ALGORITHMS=(
+    "benchmark_squaring_naive"
     "benchmark_squaring_newcol"
-    "benchmark_squaring_newrow"
     "benchmark_squaring_ar24"
+    # "benchmark_squaring_newrow"
     "benchmark_squaring_jkls18"
     "benchmark_squaring_rt22"
-    "benchmark_squaring_diag"
+    # "benchmark_squaring_diag"
 )
 
 # Initialize result file
 cat > squaring_benchmark_results.txt << EOL
-Matrix Squaring Performance Benchmarks
------------------------------------------------------------------------------------------------
-Benchmark                                     Time             CPU   Iterations UserCounters...
------------------------------------------------------------------------------------------------
+============================================
+  Matrix Squaring Benchmark Results
+============================================
+Date: $(date)
+Trials: $NUM_RUNS
+Single-thread mode
+
 EOL
 
 # Run each benchmark
@@ -51,6 +66,21 @@ for algo in "${SQUARING_ALGORITHMS[@]}"; do
 done
 
 # Add footer to results file
-echo "-----------------------------------------------------------------------------------------------" >> squaring_benchmark_results.txt
+echo "" >> squaring_benchmark_results.txt
+echo "============================================" >> squaring_benchmark_results.txt
+echo "  All Benchmarks Complete" >> squaring_benchmark_results.txt
+echo "============================================" >> squaring_benchmark_results.txt
 
-echo "Squaring benchmarks complete. Results saved in squaring_benchmark_results.txt"
+echo ""
+echo "============================================"
+echo "  All Benchmarks Complete"
+echo "============================================"
+echo "Results saved in squaring_benchmark_results.txt"
+
+# Generate summary tables
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$SCRIPT_DIR/generate_summary_table.sh" ]; then
+    echo ""
+    echo "Generating summary tables..."
+    zsh "$SCRIPT_DIR/generate_summary_table.sh"
+fi

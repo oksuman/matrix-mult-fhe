@@ -37,7 +37,7 @@ template <int d> class MatrixInverseNewColTestFixture : public ::testing::Test {
             scaleModSize = 59;
             firstModSize = 60;
             parameters.SetFirstModSize(firstModSize);
-            levelBudget = {4, 5};
+            levelBudget = {4, 4};
             bsgsDim = {0, 0};
             break;
         case 16:
@@ -46,7 +46,7 @@ template <int d> class MatrixInverseNewColTestFixture : public ::testing::Test {
             scaleModSize = 59;
             firstModSize = 60;
             parameters.SetFirstModSize(firstModSize);
-            levelBudget = {4, 5};
+            levelBudget = {4, 4};
             bsgsDim = {0, 0};
             break;
         case 32:
@@ -55,7 +55,7 @@ template <int d> class MatrixInverseNewColTestFixture : public ::testing::Test {
             scaleModSize = 59;
             firstModSize = 60;
             parameters.SetFirstModSize(firstModSize);
-            levelBudget = {4, 5};
+            levelBudget = {4, 4};
             bsgsDim = {0, 0};
             break;
         case 64:
@@ -64,7 +64,7 @@ template <int d> class MatrixInverseNewColTestFixture : public ::testing::Test {
             scaleModSize = 59;
             firstModSize = 60;
             parameters.SetFirstModSize(firstModSize);
-            levelBudget = {4, 5};
+            levelBudget = {4, 4};
             bsgsDim = {0, 0};
             break;
         default:

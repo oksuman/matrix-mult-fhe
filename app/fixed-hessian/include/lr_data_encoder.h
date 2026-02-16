@@ -34,6 +34,21 @@ static const int LR_FEATURES = 16;                // raw + 1 bias + padding to 1
 static const int LR_MATRIX_DIM = LR_BATCH_SIZE;   // d: matrix dimension
 static const int LR_SLOTS = LR_MATRIX_DIM * LR_MATRIX_DIM;  // d*d
 
+// Unified iteration counts
+static const int FH_SCALAR_INV_ITERATIONS = 2;
+
+// Matrix inversion iterations by dimension (95th percentile)
+inline int getFHInversionIterations(int d) {
+    switch(d) {
+        case 4:  return 18;
+        case 8:  return 22;
+        case 16: return 25;
+        case 32: return 27;
+        case 64: return 31;
+        default: return 25;
+    }
+}
+
 class LRDataEncoder {
 public:
     // Load CSV (header: age,sex,...,thal,target)

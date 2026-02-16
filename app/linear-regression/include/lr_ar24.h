@@ -109,7 +109,7 @@ private:
         auto trace = this->eval_trace(M, d, d * d);
         // upperBound = SAMPLE_DIM * FEATURE_DIM = 64 * 8 = 512
         double traceUpperBound = static_cast<double>(SAMPLE_DIM) * FEATURE_DIM;
-        auto trace_reciprocal = this->eval_scalar_inverse(trace, traceUpperBound, 3, d * d);
+        auto trace_reciprocal = this->eval_scalar_inverse(trace, traceUpperBound, SCALAR_INV_ITERATIONS, d * d);
  
         auto Y = this->m_cc->EvalMult(pI, trace_reciprocal);
         auto A_bar = this->m_cc->EvalSub(pI, this->m_cc->EvalMultAndRelinearize(M, trace_reciprocal));
@@ -125,10 +125,10 @@ private:
 
             if ((int)Y->GetLevel() >= this->m_multDepth - 3) {
                 A_bar->SetSlots(d * d);
-                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+                A_bar = m_cc->EvalBootstrap(A_bar, 2);
                 Y->SetSlots(d * d);
-                Y = m_cc->EvalBootstrap(Y, 2, 18);
-  
+                Y = m_cc->EvalBootstrap(Y, 2);
+
                 A_bar->SetSlots(d * d * s);
                 A_bar = this->clean(A_bar, s, d);
                 Y->SetSlots(d * d * s);
@@ -143,7 +143,7 @@ private:
         Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI2, A_bar), d, s);
         Y->SetSlots(d * d);
         if ((int)Y->GetLevel() >= this->m_multDepth - 3) {
-            Y = m_cc->EvalBootstrap(Y, 2, 18);
+            Y = m_cc->EvalBootstrap(Y, 2);
         }
 
         return Y;
@@ -213,7 +213,7 @@ public:
         if (m_verbose) std::cout << "\n[Step 2] Computing (X^T * X)^{-1} with AR24..." << std::endl;
         int s2 = std::min(FEATURE_DIM, m_maxBatch / FEATURE_DIM /FEATURE_DIM);
         auto step2_start = high_resolution_clock::now();
-        auto inv_XtX = eval_inverse(rebatched_XtX, s2, FEATURE_DIM, 18);
+        auto inv_XtX = eval_inverse(rebatched_XtX, s2, FEATURE_DIM, getInversionIterations(FEATURE_DIM));
         auto step2_end = high_resolution_clock::now();
 
         if (m_verbose) {
@@ -264,23 +264,5 @@ public:
             step3_end - step3_start,
             step4_end - step4_start
         };
-    }
-
-    void logIntermediateResult(const std::string& label, 
-                              const Ciphertext<DCRTPoly>& cipher,
-                              std::ofstream& outFile) {
-        Plaintext ptx;
-        m_cc->Decrypt(m_keyPair.secretKey, cipher, &ptx);
-        std::vector<double> result_vec = ptx->GetRealPackedValue();
-        
-        outFile << "\n=== " << label << " ===\n";
-        std::cout << "\n=== " << label << " ===\n";
-        outFile << "Number of slots: " << cipher->GetSlots() << "\n";
-        outFile << "First 10 elements: \n";
-        for (int i = 0; i < 64; i++) {
-            std::cout << std::setprecision(6) << std::fixed 
-                   << result_vec[i] << " ";
-        }
-        outFile << "\n";
     }
 };

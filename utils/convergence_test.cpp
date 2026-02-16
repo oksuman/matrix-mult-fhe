@@ -162,7 +162,7 @@ public:
 void runConvergenceTest() {
         std::vector<int> dimensions = {4, 8, 16, 32, 64};
         int num_trials = 10000;
-        double percentile_target = 0.95;  // 상위 1%를 포함하는 r값 선택 (99th percentile)
+        double percentile_target = 0.90;  // 90th percentile
         
         auto now = std::chrono::system_clock::now();
         auto now_time = std::chrono::system_clock::to_time_t(now);

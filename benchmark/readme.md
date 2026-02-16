@@ -1,143 +1,144 @@
 # Matrix Operation Benchmarks
 
-This directory contains benchmarking code for various matrix operations implemented with OpenFHE. The benchmarks are organized into different categories:
+Benchmarks for matrix operations with CKKS homomorphic encryption using OpenFHE.
 
-## Available Benchmarks
+## Quick Start
 
-### 1. Single Matrix Multiplication (`single_multiplication/`)
-Benchmarks for single matrix multiplication operations, comparing different algorithms:
-- JKLS18 (CCS'18)
-- RT22 (CCSW'22)
-  - Regular multiplication for matrices up to 16x16
-  - Strassen algorithm for 32x32 matrices using 16x16 blocks
-- AR24 (Indocrypt'24)
-- NewCol
-- NewRow
-- DP (Diagonal Packing Method)
-  
-### 2. Deep Matrix Multiplication (`deep_multiplication/`)
-Benchmarks for repeated matrix squaring operations (A -> A^2 -> A^4 -> A^8 -> ...), comparing different algorithms:
-- JKLS18 (CCS'18)
-- RT22 (CCSW'22)
-  - Regular multiplication for matrices up to 32x32
-  - Strassen algorithm for 64x64 matrices using 32x32 blocks
-- AR24 (Indocrypt'24)
-- NewCol
-- NewRow
-- DP (Diagonal Packing Method)
-
-Each algorithm performs 10 rounds of squaring operations with increased multiplicative depth.
-
-### 3. Matrix Inversion (`inversion/`) 
-Benchmarks for matrix inversion algorithms.
-- Naive Approach
-- JKLS18 (CCS'18)
-- RT22 (CCSW'22)
-  - Regular multiplication for matrices up to 32x32
-  - Strassen algorithm for 64x64 matrices using 32x32 blocks
-- AR24 (Indocrypt'24)
-- NewCol
-- NewRow
-- DP (Diagonal Packing Method)
-  
-## Build Instructions
-
-1. Create and navigate to build directory:
 ```bash
-mkdir build
-cd build
-```
-
-2. Configure CMake:
-```bash
+# Build
+cd /path/to/matrix-mult-fhe
+mkdir build && cd build
 cmake ..
+make -j$(nproc)
 ```
 
-3. Build the benchmarks:
-```bash
-make
-```
+## 1. Deep Multiplication (`deep_multiplication/`)
 
-This will build all benchmark executables in their respective directories:
-- `build/benchmark/single_multiplication/`
-- `build/benchmark/deep_multiplication/`
-- `build/benchmark/inversion/`
+Repeated squaring: A → A² → A⁴ → ... → A^(2^15)
 
-## Running Benchmarks
+### Algorithms
 
-### Single Matrix Multiplication
+| Algorithm | Ciphertexts | Mult Depth | Description |
+|-----------|-------------|------------|-------------|
+| NewCol    | 1           | 2 per iter | Column-based packing |
+| AR24      | 1           | 3 per iter | INDOCRYPT 2024 |
+| JKLS18    | 1           | 3 per iter | CCS 2018 |
+| RT22      | 1           | 2 per iter | CCSW 2022 |
+| NewRow    | 1           | 2 per iter | Row-based packing |
+| Diagonal  | d           | 1 per iter | d ciphertexts for d diagonals |
 
-1. Navigate to the benchmark directory:
-```bash
-cd build/benchmark/single_multiplication
-```
+### Run
 
-2. Grant execution permission to the script:
-```bash
-chmod +x run_benchmarks.sh
-```
-
-3. Run the benchmarks:
-```bash
-./run_benchmarks.sh
-```
-
-The script will:
-- Run each algorithm's benchmark separately
-- Provide system stabilization time between runs
-- Generate result files for each algorithm
-
-### Deep Matrix Multiplication
-
-1. Navigate to the benchmark directory:
 ```bash
 cd build/benchmark/deep_multiplication
+
+# Run all algorithms (with 45s cooling between each)
+./run_squaring_benchmarks.sh        # 1 trial per dimension
+./run_squaring_benchmarks.sh 10     # 10 trials per dimension
+
+# Run single algorithm
+./benchmark_squaring_newcol [num_runs]
+./benchmark_squaring_ar24 [num_runs]
+./benchmark_squaring_jkls18 [num_runs]
+./benchmark_squaring_rt22 [num_runs]
+./benchmark_squaring_newrow [num_runs]
+./benchmark_squaring_diag [num_runs]
 ```
 
-2. Grant execution permission to the script:
-```bash
-chmod +x run_squaring_benchmarks.sh
-```
+Results saved to `squaring_benchmark_results.txt`.
 
-3. Run the benchmarks:
-```bash
-./run_squaring_benchmarks.sh
-```
+## 2. Matrix Inversion (`inversion/`)
 
-### Inversion 
+Newton-Schulz iteration: Y_{k+1} = Y_k(2I - AY_k)
 
-1. Navigate to the benchmark directory:
+### Iterations by Dimension
+
+| Dimension | Iterations (r) |
+|-----------|----------------|
+| 4×4       | 18             |
+| 8×8       | 21             |
+| 16×16     | 25             |
+| 32×32     | 28             |
+| 64×64     | 31             |
+
+### Run
+
 ```bash
 cd build/benchmark/inversion
+
+# Run all algorithms
+./run_inversion_benchmarks.sh       # 1 trial
+./run_inversion_benchmarks.sh 10    # 10 trials
+
+# Run single algorithm
+./benchmark_inversion_newcol [num_runs]
+./benchmark_inversion_ar24 [num_runs]
+./benchmark_inversion_jkls18 [num_runs]
+./benchmark_inversion_rt22 [num_runs]
+./benchmark_inversion_newrow [num_runs]
+./benchmark_inversion_diag [num_runs]
+./benchmark_inversion_naive [num_runs]  # d≤8 only
 ```
 
-2. Grant execution permission to the script:
-```bash
-chmod +x run_inversion_benchmarks.sh
+## Output Format
+
+Each benchmark reports:
+
+```
+========== NewCol Squaring d=8 ==========
+Mult Depth: 30, Scaling: 50, Ring: 131072
+  [1/1] 30.29s, log2(err)=-38.0
+
+--- Summary (d=8) ---
+Time: 30.29s
+  Frobenius Norm Error: 0.000000
+  Relative Frobenius:   0.000000
+  log2(Rel. Frob.):     -38.0
+
+=== Memory Analysis ===
+  Idle Memory:        0.0312 GB
+  Setup Memory:       1.2456 GB
+  Peak Memory:        1.8234 GB
+  Setup Overhead:     1.2144 GB
+  Compute Overhead:   0.5778 GB
+
+=== Serialized Sizes ===
+  Ciphertext:         125.50 MB
+  Rotation Keys:      1024.00 MB
+  Relin Key:          64.00 MB
 ```
 
-3. Run the benchmarks:
-```bash
-./run_inversion_benchmarks.sh
+## Fairness Guarantees
+
+- **Single-thread**: `OMP_NUM_THREADS=1`
+- **Cooling period**: 45 seconds between algorithms
+- **Time measurement**: Computation only (excludes encryption/decryption/output)
+- **Ground truth**: Plaintext computation for accuracy comparison
+
+## Configuration
+
+Common parameters in `benchmark_config.h`:
+
+| Parameter | Value |
+|-----------|-------|
+| Security Level | HEStd_128_classic |
+| Scaling Mod Size | 50 (deep mult), 59 (inversion) |
+| Squaring Iterations | 15 |
+
+## File Structure
+
 ```
-
-The script will:
-- Run each algorithm's squaring benchmark separately
-- Allow system cooling between runs
-- Generate individual result files for each algorithm
-
-## System Requirements
-
-- CMake 3.5.1 or higher
-- C++17 compiler
-- OpenFHE library
-- Google Benchmark library (automatically fetched by CMake)
-
-## Adding New Benchmarks
-
-To add new benchmarks:
-1. Create a new directory under `benchmark/`
-2. Add appropriate CMakeLists.txt
-3. Implement benchmark code following existing patterns
-4. Update main CMakeLists.txt to include new directory
-5. Update this README with new benchmark details
+benchmark/
+├── README.md
+├── benchmark_config.h      # Common configuration & ErrorMetrics
+├── memory_tracker.h/cpp    # Memory monitoring utilities
+│
+├── deep_multiplication/
+│   ├── benchmark_squaring.h
+│   ├── benchmark_squaring_*.cpp
+│   └── run_squaring_benchmarks.sh
+│
+└── inversion/
+    ├── benchmark_inversion_*.cpp
+    └── run_inversion_benchmarks.sh
+```

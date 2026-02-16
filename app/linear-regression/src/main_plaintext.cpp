@@ -7,6 +7,7 @@
 
 const int FEATURE_DIM = 8;
 const int SAMPLE_DIM = 64;
+const int TEST_SAMPLE_DIM = 256;
 
 struct LRResult {
     std::vector<double> XtX;           // X^T * X (64x64)
@@ -100,16 +101,16 @@ LRResult runPlaintextLR(const std::string& trainFile, const std::string& testFil
     auto simulated = LRPlaintextOps::simulateEncryptedMatVecMult(result.XtX_inv, result.Xty, FEATURE_DIM, true);
 
     // Load test data and compute MSE
-    std::cout << "\n[Inference] Computing MSE on test set..." << std::endl;
+    std::cout << "\n[Inference] Computing MSE on test set (" << TEST_SAMPLE_DIM << " samples)..." << std::endl;
     std::vector<double> test_features, test_outcomes;
-    CSVProcessor::processDataset(testFile, test_features, test_outcomes, FEATURE_DIM, SAMPLE_DIM);
+    CSVProcessor::processDataset(testFile, test_features, test_outcomes, FEATURE_DIM, TEST_SAMPLE_DIM);
 
     double mse = 0.0;
     int count = 0;
-    for (int i = 0; i < SAMPLE_DIM; i++) {
+    for (int i = 0; i < TEST_SAMPLE_DIM; i++) {
         double pred = 0.0;
         for (int j = 0; j < FEATURE_DIM; j++) {
-            pred += result.weights[j] * test_features[i * SAMPLE_DIM + j];
+            pred += result.weights[j] * test_features[i * TEST_SAMPLE_DIM + j];
         }
         double actual = test_outcomes[i];
         mse += (pred - actual) * (pred - actual);

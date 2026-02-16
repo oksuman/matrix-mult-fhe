@@ -5,8 +5,23 @@
 #include "encryption.h"
 #include "rotation.h"
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 int main() {
-    int multDepth = 31; 
+    #ifdef _OPENMP
+    omp_set_num_threads(1);
+    #endif
+
+    std::cout << "\n============================================" << std::endl;
+    std::cout << "  Linear Regression - AR24 Algorithm" << std::endl;
+    std::cout << "============================================" << std::endl;
+    std::cout << "Training samples: " << SAMPLE_DIM << std::endl;
+    std::cout << "Features: " << FEATURE_DIM << std::endl;
+    std::cout << "Matrix dimension: " << SAMPLE_DIM << "x" << SAMPLE_DIM << std::endl;
+
+    int multDepth = 28;
     uint32_t scaleModSize = 59;
     uint32_t firstModSize = 60;
 
@@ -19,7 +34,7 @@ int main() {
     parameters.SetBatchSize(1 << 16);
     parameters.SetSecurityLevel(HEStd_128_classic);
 
-    std::vector<uint32_t> levelBudget = {4, 5};
+    std::vector<uint32_t> levelBudget = {4, 4};
     std::vector<uint32_t> bsgsDim = {0, 0};
 
     auto cc = GenCryptoContext(parameters);
@@ -79,7 +94,13 @@ int main() {
     timingFile.close();
 
     // Calculate and record MSE
+    std::cout << "\n--- Inference on Test Set ---" << std::endl;
+    std::cout << "Test samples: " << SAMPLE_DIM << std::endl;
     double mse = lr.inferenceAndCalculateMSE(std::string(DATA_DIR) + "/testSet.csv", "ar24_mse_result.txt");
-    std::cout << "mse: " << mse << std::endl;
+    std::cout << "MSE: " << mse << std::endl;
+
+    std::cout << "\n============================================" << std::endl;
+    std::cout << "  Complete" << std::endl;
+    std::cout << "============================================" << std::endl;
     return 0;
 }

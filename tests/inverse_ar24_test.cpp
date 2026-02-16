@@ -41,7 +41,7 @@ template <int d> class MatrixInverseAR24TestFixture : public ::testing::Test {
             scaleModSize = 59;
             firstModSize = 60;
             parameters.SetFirstModSize(firstModSize);
-            levelBudget = {4, 5};
+            levelBudget = {4, 4};
             bsgsDim = {0, 0};
             break;
         case 16:
@@ -50,7 +50,7 @@ template <int d> class MatrixInverseAR24TestFixture : public ::testing::Test {
             scaleModSize = 59;
             firstModSize = 60;
             parameters.SetFirstModSize(firstModSize);
-            levelBudget = {4, 5};
+            levelBudget = {4, 4};
             bsgsDim = {0, 0};
             break;
         case 32:
@@ -59,7 +59,7 @@ template <int d> class MatrixInverseAR24TestFixture : public ::testing::Test {
             scaleModSize = 59;
             firstModSize = 60;
             parameters.SetFirstModSize(firstModSize);
-            levelBudget = {4, 5};
+            levelBudget = {4, 4};
             bsgsDim = {0, 0};
             break;
         case 64:
@@ -68,7 +68,7 @@ template <int d> class MatrixInverseAR24TestFixture : public ::testing::Test {
             scaleModSize = 59;
             firstModSize = 60;
             parameters.SetFirstModSize(firstModSize);
-            levelBudget = {4, 5};
+            levelBudget = {4, 4};
             bsgsDim = {0, 0};
             break;
         default:
@@ -290,9 +290,7 @@ TYPED_TEST_P(MatrixInverseAR24TestTyped, ComprehensiveInverseTest) {
     auto matrix = this->generateRandomMatrix();
 
     auto enc_matrix = this->m_enc->encryptInput(matrix);
-    auto inv_result = this->matInv->eval_inverse_debug(enc_matrix,
-    this->m_privateKey);
-    // auto inv_result = this->matInv->eval_inverse(enc_matrix);
+    auto inv_result = this->matInv->eval_inverse(enc_matrix);
 
     Plaintext result;
     this->m_cc->Decrypt(this->m_privateKey, inv_result, &result);

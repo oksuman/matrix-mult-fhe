@@ -12,6 +12,21 @@
 const int FEATURE_DIM = 8;
 const int SAMPLE_DIM = 64;
 
+// Unified iteration counts
+const int SCALAR_INV_ITERATIONS = 2;
+
+// Matrix inversion iterations by dimension (95th percentile)
+inline int getInversionIterations(int d) {
+    switch(d) {
+        case 4:  return 18;
+        case 8:  return 22;
+        case 16: return 25;
+        case 32: return 27;
+        case 64: return 31;
+        default: return 25;
+    }
+}
+
 class LinearRegressionBase {
 protected:
     std::shared_ptr<Encryption> m_enc;
@@ -388,6 +403,8 @@ public:
         , rot(cc, rotIndices, cc->GetRingDimension() / 2) {}
 
     void setVerbose(bool v) { m_verbose = v; }
+
+    const Ciphertext<DCRTPoly>& getWeights() const { return m_weights; }
 
     virtual ~LinearRegressionBase() = default;
 

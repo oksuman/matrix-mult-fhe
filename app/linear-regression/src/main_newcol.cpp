@@ -5,14 +5,29 @@
 #include "encryption.h"
 #include "rotation.h"
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 // const int FEATURE_DIM = 8;
 // const int SAMPLE_DIM = 64;
 
 int main() {
-    int multDepth = 29; 
+    #ifdef _OPENMP
+    omp_set_num_threads(1);
+    #endif
+
+    std::cout << "\n============================================" << std::endl;
+    std::cout << "  Linear Regression - NewCol Algorithm" << std::endl;
+    std::cout << "============================================" << std::endl;
+    std::cout << "Training samples: " << SAMPLE_DIM << std::endl;
+    std::cout << "Features: " << FEATURE_DIM << std::endl;
+    std::cout << "Matrix dimension: " << SAMPLE_DIM << "x" << SAMPLE_DIM << std::endl;
+
+    int multDepth = 28;
     uint32_t scaleModSize = 59;
     uint32_t firstModSize = 60;
-    
+
     CCParams<CryptoContextCKKSRNS> parameters;
     parameters.SetMultiplicativeDepth(multDepth);
 
@@ -83,7 +98,13 @@ int main() {
     timingFile.close();
 
     // Calculate and record MSE
+    std::cout << "\n--- Inference on Test Set ---" << std::endl;
+    std::cout << "Test samples: " << SAMPLE_DIM << std::endl;
     double mse = lr.inferenceAndCalculateMSE(std::string(DATA_DIR) + "/testSet.csv", "newcol_mse_result.txt");
-    std::cout << "mse: " << mse << std::endl;
+    std::cout << "MSE: " << mse << std::endl;
+
+    std::cout << "\n============================================" << std::endl;
+    std::cout << "  Complete" << std::endl;
+    std::cout << "============================================" << std::endl;
     return 0;
 }

@@ -202,7 +202,7 @@ public:
         }
 
         // Compute encrypted alpha = 1/trace using power series (d*d slots, same as trace)
-        auto alphaEnc = eval_scalar_inverse(traceEnc, traceUpperBound, 3, d * d);
+        auto alphaEnc = eval_scalar_inverse(traceEnc, traceUpperBound, LDA_SCALAR_INV_ITERATIONS, d * d);
 
         if (m_verbose) {
             Plaintext ptxTrace, ptxAlpha;
@@ -302,9 +302,9 @@ public:
                 }
 
                 A_bar->SetSlots(d * d);
-                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+                A_bar = m_cc->EvalBootstrap(A_bar, 2);
                 Y->SetSlots(d * d);
-                Y = m_cc->EvalBootstrap(Y, 2, 18);
+                Y = m_cc->EvalBootstrap(Y, 2);
 
                 // AFTER bootstrap, BEFORE clean
                 if (m_verbose) {
@@ -388,9 +388,9 @@ public:
                 std::cout << "  [Before Final] Bootstrapping. Y level: " << Y->GetLevel() << std::endl;
             }
             A_bar->SetSlots(d * d);
-            A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+            A_bar = m_cc->EvalBootstrap(A_bar, 2);
             Y->SetSlots(d * d);
-            Y = m_cc->EvalBootstrap(Y, 2, 18);
+            Y = m_cc->EvalBootstrap(Y, 2);
             A_bar->SetSlots(d * d * s);
             Y->SetSlots(d * d * s);
             if (m_verbose) {

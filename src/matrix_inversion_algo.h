@@ -6,11 +6,16 @@
 
 using namespace lbcrypto;
 
+// Scalar inversion iterations (unified)
+constexpr int SCALAR_INV_ITERATIONS = 2;
+
 // Base class for matrix inverse operations
 template <int d> class MatrixInverseBase {
   protected:
     int r;
     int depth;
+    int scalar_inv_iter;
+
     virtual std::vector<double> initializeIdentityMatrix(size_t dim) {
         std::vector<double> identity(dim * dim, 0.0);
         for (size_t i = 0; i < dim; i++) {
@@ -20,8 +25,8 @@ template <int d> class MatrixInverseBase {
     }
 
   public:
-    MatrixInverseBase(int iterations, int multDepth)
-        : r(iterations), depth(multDepth) {}
+    MatrixInverseBase(int iterations, int multDepth, int scalarInvIter = SCALAR_INV_ITERATIONS)
+        : r(iterations), depth(multDepth), scalar_inv_iter(scalarInvIter) {}
     virtual ~MatrixInverseBase() = default;
 
     virtual Ciphertext<DCRTPoly>
@@ -44,8 +49,8 @@ class MatrixInverse_JKLS18 : public MatrixInverseBase<d>,
                          CryptoContext<DCRTPoly> cc,
                          PublicKey<DCRTPoly> publicKey,
                          std::vector<int> rotIndices, int iterations,
-                         int multDepth)
-        : MatrixInverseBase<d>(iterations, multDepth), MatrixMult_JKLS18<d>(
+                         int multDepth, int scalarInvIter = SCALAR_INV_ITERATIONS)
+        : MatrixInverseBase<d>(iterations, multDepth, scalarInvIter), MatrixMult_JKLS18<d>(
                                                            enc, cc, publicKey,
                                                            rotIndices) {}
 
@@ -57,8 +62,12 @@ class MatrixInverse_JKLS18 : public MatrixInverseBase<d>,
         auto MM_transposed = this->eval_mult(M, M_transposed);
 
         auto trace = this->eval_trace(MM_transposed, d * d);
-        auto trace_reciprocal =
-            this->m_cc->EvalDivide(trace, (d * d) / 3 - d, (d * d) / 3 + d, 50);
+
+        // Bootstrap before scalar inverse if needed
+        if ((int)trace->GetLevel() >= this->depth - 10) {
+            trace = m_cc->EvalBootstrap(trace, 2, 18);
+        }
+        auto trace_reciprocal = this->eval_scalar_inverse(trace, d * d, this->scalar_inv_iter, d * d);
 
         auto Y =
             this->m_cc->EvalMultAndRelinearize(M_transposed, trace_reciprocal);
@@ -67,12 +76,16 @@ class MatrixInverse_JKLS18 : public MatrixInverseBase<d>,
                                         MM_transposed, trace_reciprocal));
 
         for (int i = 0; i < this->r - 1; i++) {
-            Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
-            A_bar = this->eval_mult(A_bar, A_bar);
             if ((int)Y->GetLevel() >= this->depth - 3) {
                 A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
                 Y = m_cc->EvalBootstrap(Y, 2, 18);
             }
+            Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
+            A_bar = this->eval_mult(A_bar, A_bar);
+        }
+        if ((int)Y->GetLevel() >= this->depth - 3) {
+            A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+            Y = m_cc->EvalBootstrap(Y, 2, 18);
         }
         Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
 
@@ -80,6 +93,7 @@ class MatrixInverse_JKLS18 : public MatrixInverseBase<d>,
     }
 };
 
+// RT22
 template <int d>
 class MatrixInverse_RT22 : public MatrixInverseBase<d>,
                            public MatrixMult_RT22<d> {
@@ -92,8 +106,8 @@ class MatrixInverse_RT22 : public MatrixInverseBase<d>,
                        CryptoContext<DCRTPoly> cc,
                        PublicKey<DCRTPoly> publicKey,
                        std::vector<int> rotIndices, int iterations,
-                       int multDepth)
-        : MatrixInverseBase<d>(iterations, multDepth), MatrixMult_RT22<d>(
+                       int multDepth, int scalarInvIter = SCALAR_INV_ITERATIONS)
+        : MatrixInverseBase<d>(iterations, multDepth, scalarInvIter), MatrixMult_RT22<d>(
                                                            enc, cc, publicKey,
                                                            rotIndices) {}
 
@@ -103,10 +117,15 @@ class MatrixInverse_RT22 : public MatrixInverseBase<d>,
 
         auto M_transposed = this->eval_transpose(M);
         auto MM_transposed = this->eval_mult(M, M_transposed);
+        MM_transposed->SetSlots(d * d);
 
-        auto trace = this->eval_trace(MM_transposed, d * d * d);
-        auto trace_reciprocal =
-            this->m_cc->EvalDivide(trace, (d * d) / 3 - d, (d * d) / 3 + d, 50);
+        auto trace = this->eval_trace(MM_transposed, d * d);
+
+        // Bootstrap before scalar inverse if needed
+        if ((int)trace->GetLevel() >= this->depth - 10) {
+            trace = m_cc->EvalBootstrap(trace, 2, 18);
+        }
+        auto trace_reciprocal = this->eval_scalar_inverse(trace, d * d, this->scalar_inv_iter, d * d);
 
         auto Y =
             this->m_cc->EvalMultAndRelinearize(M_transposed, trace_reciprocal);
@@ -115,20 +134,27 @@ class MatrixInverse_RT22 : public MatrixInverseBase<d>,
                                         MM_transposed, trace_reciprocal));
 
         for (int i = 0; i < this->r - 1; i++) {
-            if (d >= 8 && (int)Y->GetLevel() >= this->depth - 2) {
+            if ((int)Y->GetLevel() >= this->depth - 2) {
                 A_bar->SetSlots(d * d);
-                A_bar = m_cc->EvalBootstrap(A_bar, 2, 17);
+                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
                 Y->SetSlots(d * d);
-                Y = m_cc->EvalBootstrap(Y, 2, 17);
+                Y = m_cc->EvalBootstrap(Y, 2, 18);
             }
             Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
             A_bar = this->eval_mult(A_bar, A_bar);
+        }
+        if ((int)Y->GetLevel() >= this->depth - 2) {
+            A_bar->SetSlots(d * d);
+            A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+            Y->SetSlots(d * d);
+            Y = m_cc->EvalBootstrap(Y, 2, 18);
         }
         Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
         return Y;
     }
 };
 
+// AR24
 template <int d>
 class MatrixInverse_AR24 : public MatrixInverseBase<d>,
                            public MatrixMult_AR24<d> {
@@ -141,138 +167,74 @@ class MatrixInverse_AR24 : public MatrixInverseBase<d>,
                        CryptoContext<DCRTPoly> cc,
                        PublicKey<DCRTPoly> publicKey,
                        std::vector<int> rotIndices, int iterations,
-                       int multDepth)
-        : MatrixInverseBase<d>(iterations, multDepth), MatrixMult_AR24<d>(
+                       int multDepth, int scalarInvIter = SCALAR_INV_ITERATIONS)
+        : MatrixInverseBase<d>(iterations, multDepth, scalarInvIter), MatrixMult_AR24<d>(
                                                            enc, cc, publicKey,
                                                            rotIndices) {}
 
     Ciphertext<DCRTPoly> eval_inverse(const Ciphertext<DCRTPoly> &M) override {
         std::vector<double> vI = this->initializeIdentityMatrix(d);
-        Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI);
+        Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI, 1, 0, nullptr, d * d);
 
         auto M_transposed = this->eval_transpose(M);
-        auto MM_transposed = this->eval_mult(M, M_transposed);
 
-        auto trace = this->eval_trace(MM_transposed, d * d * this->s);
-        auto trace_reciprocal =
-            this->m_cc->EvalDivide(trace, (d * d) / 3 - d, (d * d) / 3 + d, 50);
+        auto M_expanded = M->Clone();
+        M_expanded->SetSlots(d * d * this->s);
+        M_expanded = this->clean(M_expanded);
+        auto Mt_expanded = M_transposed->Clone();
+        Mt_expanded->SetSlots(d * d * this->s);
+        Mt_expanded = this->clean(Mt_expanded);
+
+        auto MM_transposed = this->eval_mult(M_expanded, Mt_expanded);
+
+        auto trace = this->eval_trace(MM_transposed, d * d);
+
+        if ((int)trace->GetLevel() >= this->depth - 10) {
+            trace->SetSlots(d * d);
+            trace = m_cc->EvalBootstrap(trace, 2, 18);
+        }
+        auto trace_reciprocal = this->eval_scalar_inverse(trace, d * d, this->scalar_inv_iter, d * d);
 
         auto Y =
             this->m_cc->EvalMultAndRelinearize(M_transposed, trace_reciprocal);
         auto A_bar =
             this->m_cc->EvalSub(pI, this->m_cc->EvalMultAndRelinearize(
                                         MM_transposed, trace_reciprocal));
-        A_bar->SetSlots(d * d * this->s);
-        A_bar = this->clean(A_bar);
 
         for (int i = 0; i < this->r - 1; i++) {
-            Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
-            A_bar = this->eval_mult(A_bar, A_bar);
-
             if ((int)Y->GetLevel() >= this->depth - 3) {
-                A_bar->SetSlots(d * d);
-                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
-                Y->SetSlots(d * d);
                 Y = m_cc->EvalBootstrap(Y, 2, 18);
-                A_bar->SetSlots(d * d * this->s);
-                A_bar = this->clean(A_bar);
-                Y->SetSlots(d * d * this->s);
-                Y = this->clean(Y);
-            } else {
-                A_bar = this->clean(A_bar);
-                Y = this->clean(Y);
+                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
             }
+            auto pI_level = m_cc->MakeCKKSPackedPlaintext(vI, 1, A_bar->GetLevel(), nullptr, d * d);
+            auto I_plus_A = this->m_cc->EvalAdd(pI_level, A_bar);
+
+            I_plus_A->SetSlots(d * d * this->s);
+            I_plus_A = this->clean(I_plus_A);
+            Y->SetSlots(d * d * this->s);
+            Y = this->clean(Y);
+            Y = this->eval_mult(Y, I_plus_A);
+
+            A_bar->SetSlots(d * d * this->s);
+            A_bar = this->clean(A_bar);
+            auto A_bar_copy = A_bar->Clone();
+            A_bar = this->eval_mult(A_bar, A_bar_copy);
         }
-        Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
+        if ((int)Y->GetLevel() >= this->depth - 3) {
+            Y = m_cc->EvalBootstrap(Y, 2, 18);
+            A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+        }
+        auto pI_final = m_cc->MakeCKKSPackedPlaintext(vI, 1, A_bar->GetLevel(), nullptr, d * d);
+        auto I_plus_A_final = this->m_cc->EvalAdd(pI_final, A_bar);
+
+        I_plus_A_final->SetSlots(d * d * this->s);
+        I_plus_A_final = this->clean(I_plus_A_final);
+        Y->SetSlots(d * d * this->s);
+        Y = this->clean(Y);
+        Y = this->eval_mult(Y, I_plus_A_final);
         return Y;
     }
 
-    Ciphertext<DCRTPoly> eval_inverse_debug(const Ciphertext<DCRTPoly> &M,
-                                            PrivateKey<DCRTPoly> m_privateKey) {
-        std::vector<double> vI = this->initializeIdentityMatrix(d);
-        Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI);
-
-        Plaintext debug_ptx;
-        std::vector<double> debug_vec;
-
-        auto M_transposed = this->eval_transpose(M);
-        auto MM_transposed = this->eval_mult(M, M_transposed);
-
-        this->m_cc->Decrypt(m_privateKey, M_transposed, &debug_ptx);
-        debug_ptx->SetLength(10);
-        debug_vec = debug_ptx->GetRealPackedValue();
-        std::cout << "M^T: " << std::endl;
-        std::cout << debug_vec << std::endl;
-
-        this->m_cc->Decrypt(m_privateKey, MM_transposed, &debug_ptx);
-        debug_ptx->SetLength(10);
-        debug_vec = debug_ptx->GetRealPackedValue();
-        std::cout << "MM^T: " << std::endl;
-        std::cout << debug_vec << std::endl;
-
-        auto trace = this->eval_trace(MM_transposed, d * d * this->s);
-
-        this->m_cc->Decrypt(m_privateKey, trace, &debug_ptx);
-        debug_ptx->SetLength(10);
-        debug_vec = debug_ptx->GetRealPackedValue();
-        std::cout << "trace: " << std::endl;
-        std::cout << debug_vec << std::endl;
-
-        auto trace_reciprocal = this->m_cc->EvalDivide(trace, (d * d) / 3 - d, (d * d) / 3 + d, 5);
-
-        this->m_cc->Decrypt(m_privateKey, trace_reciprocal, &debug_ptx);
-        debug_ptx->SetLength(10);
-        debug_vec = debug_ptx->GetRealPackedValue();
-        std::cout << "trace_reciprocal: " << std::endl;
-        std::cout << debug_vec << std::endl;
-
-        auto Y =
-            this->m_cc->EvalMultAndRelinearize(M_transposed, trace_reciprocal);
-        auto A_bar =
-            this->m_cc->EvalSub(pI, this->m_cc->EvalMultAndRelinearize(
-                                        MM_transposed, trace_reciprocal));
-        A_bar->SetSlots(d * d * this->s);
-        A_bar = this->clean(A_bar);
-
-        this->m_cc->Decrypt(m_privateKey, Y, &debug_ptx);
-        debug_ptx->SetLength(10);
-        debug_vec = debug_ptx->GetRealPackedValue();
-        std::cout << "Y: " << std::endl;
-        std::cout << debug_vec << std::endl;
-
-        this->m_cc->Decrypt(m_privateKey, A_bar, &debug_ptx);
-        debug_ptx->SetLength(10);
-        debug_vec = debug_ptx->GetRealPackedValue();
-        std::cout << "A_bar: " << std::endl;
-        std::cout << debug_vec << std::endl;
-
-        for (int i = 0; i < this->r - 1; i++) {
-
-            if ((int)Y->GetLevel() >= this->depth - 2) {
-                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
-                Y = m_cc->EvalBootstrap(Y, 2, 18);
-            }
-            Y = this->eval_mult_and_clean(Y, this->m_cc->EvalAdd(pI, A_bar));
-            A_bar = this->eval_mult_and_clean(A_bar, A_bar);
-            std::cout << i << "-th iteration: " << std::endl;
-            std::cout << "level of Y: " << Y->GetLevel() << std::endl;
-            std::cout << "level of A_bar: " << A_bar->GetLevel() << std::endl;
-
-            this->m_cc->Decrypt(m_privateKey, Y, &debug_ptx);
-            debug_vec = debug_ptx->GetRealPackedValue();
-            debug_ptx->SetLength(10);
-            std::cout << "Y: " << std::endl;
-            std::cout << debug_vec << std::endl;
-
-            this->m_cc->Decrypt(m_privateKey, A_bar, &debug_ptx);
-            debug_ptx->SetLength(10);
-            debug_vec = debug_ptx->GetRealPackedValue();
-            std::cout << "A_bar: " << std::endl;
-            std::cout << debug_vec << std::endl;
-        }
-        Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
-        return Y;
-    }
 };
 
 // Implementation using newCol matrix multiplication
@@ -289,21 +251,24 @@ class MatrixInverse_newCol : public MatrixInverseBase<d>,
                          CryptoContext<DCRTPoly> cc,
                          PublicKey<DCRTPoly> publicKey,
                          std::vector<int> rotIndices, int iterations,
-                         int multDepth)
-        : MatrixInverseBase<d>(iterations, multDepth), MatrixMult_newCol<d>(
+                         int multDepth, int scalarInvIter = SCALAR_INV_ITERATIONS)
+        : MatrixInverseBase<d>(iterations, multDepth, scalarInvIter), MatrixMult_newCol<d>(
                                                            enc, cc, publicKey,
                                                            rotIndices) {}
 
     Ciphertext<DCRTPoly> eval_inverse(const Ciphertext<DCRTPoly> &M) override {
         std::vector<double> vI = this->initializeIdentityMatrix(d);
-        Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI);
+        Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI, 1, 0, nullptr, d * d);
 
         auto M_transposed = this->eval_transpose(M);
         auto MM_transposed = this->eval_mult(M, M_transposed);
 
         auto trace = this->eval_trace(MM_transposed, d * d);
-        auto trace_reciprocal =
-            this->m_cc->EvalDivide(trace, (d * d) / 3 - d, (d * d) / 3 + d, 50);
+
+        if ((int)trace->GetLevel() >= this->depth - 10) {
+            trace = m_cc->EvalBootstrap(trace, 2, 18);
+        }
+        auto trace_reciprocal = this->eval_scalar_inverse(trace, d * d, this->scalar_inv_iter, d * d);
 
         auto Y =
             this->m_cc->EvalMultAndRelinearize(M_transposed, trace_reciprocal);
@@ -312,19 +277,23 @@ class MatrixInverse_newCol : public MatrixInverseBase<d>,
                                         MM_transposed, trace_reciprocal));
 
         for (int i = 0; i < this->r - 1; i++) {
-            if (d >= 8 && (int)Y->GetLevel() >= this->depth - 2) {
-                A_bar = m_cc->EvalBootstrap(A_bar, 2, 17);
-                Y = m_cc->EvalBootstrap(Y, 2, 17);
+            if ((int)Y->GetLevel() >= this->depth - 2) {
+                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+                Y = m_cc->EvalBootstrap(Y, 2, 18);
             }
             Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
             A_bar = this->eval_mult(A_bar, A_bar);
+        }
+        if ((int)Y->GetLevel() >= this->depth - 2) {
+            A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+            Y = m_cc->EvalBootstrap(Y, 2, 18);
         }
         Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
         return Y;
     }
 };
 
-// row-based approach
+// newRow
 template <int d>
 class MatrixInverse_newRow : public MatrixInverseBase<d>,
                              public MatrixMult_newRow<d> {
@@ -338,13 +307,12 @@ class MatrixInverse_newRow : public MatrixInverseBase<d>,
                          CryptoContext<DCRTPoly> cc,
                          PublicKey<DCRTPoly> publicKey,
                          std::vector<int> rotIndices, int iterations,
-                         int multDepth)
-        : MatrixInverseBase<d>(iterations, multDepth), MatrixMult_newRow<d>(
+                         int multDepth, int scalarInvIter = SCALAR_INV_ITERATIONS)
+        : MatrixInverseBase<d>(iterations, multDepth, scalarInvIter), MatrixMult_newRow<d>(
                                                            enc, cc, publicKey,
                                                            rotIndices) {}
 
     Ciphertext<DCRTPoly> eval_inverse(const Ciphertext<DCRTPoly> &M) override {
-
         std::vector<double> vI = this->initializeIdentityMatrix(d);
         Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI);
 
@@ -352,8 +320,12 @@ class MatrixInverse_newRow : public MatrixInverseBase<d>,
         auto MM_transposed = this->eval_mult(M, M_transposed);
 
         auto trace = this->eval_trace(MM_transposed, d * d);
-        auto trace_reciprocal =
-            this->m_cc->EvalDivide(trace, (d * d) / 3 - d, (d * d) / 3 + d, 50);
+
+        // Bootstrap before scalar inverse if needed
+        if ((int)trace->GetLevel() >= this->depth - 10) {
+            trace = m_cc->EvalBootstrap(trace, 2, 18);
+        }
+        auto trace_reciprocal = this->eval_scalar_inverse(trace, d * d, this->scalar_inv_iter, d * d);
 
         auto Y =
             this->m_cc->EvalMultAndRelinearize(M_transposed, trace_reciprocal);
@@ -362,12 +334,16 @@ class MatrixInverse_newRow : public MatrixInverseBase<d>,
                                         MM_transposed, trace_reciprocal));
 
         for (int i = 0; i < this->r - 1; i++) {
-            if (d >= 8 && (int)Y->GetLevel() >= this->depth - 2) {
-                A_bar = m_cc->EvalBootstrap(A_bar, 2, 17);
-                Y = m_cc->EvalBootstrap(Y, 2, 17);
+            if ((int)Y->GetLevel() >= this->depth - 2) {
+                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+                Y = m_cc->EvalBootstrap(Y, 2, 18);
             }
             Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
             A_bar = this->eval_mult(A_bar, A_bar);
+        }
+        if ((int)Y->GetLevel() >= this->depth - 2) {
+            A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+            Y = m_cc->EvalBootstrap(Y, 2, 18);
         }
         Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
 

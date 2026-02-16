@@ -239,8 +239,8 @@ public:
             traceUpperBound = 64.0 * actualDim;
         }
 
-        // Compute encrypted alpha = 1/trace using power series (3 iterations for scalar)
-        auto alphaEnc = eval_scalar_inverse(traceEnc, traceUpperBound, 3, d * d);
+        // Compute encrypted alpha = 1/trace using power series
+        auto alphaEnc = eval_scalar_inverse(traceEnc, traceUpperBound, LDA_SCALAR_INV_ITERATIONS, d * d);
 
         if (m_verbose) {
             // For debugging: decrypt and show actual trace and alpha
@@ -269,8 +269,8 @@ public:
                     std::cout << "  [Iter " << i << "] Bootstrapping triggered. Y level: "
                               << Y->GetLevel() << std::endl;
                 }
-                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
-                Y = m_cc->EvalBootstrap(Y, 2, 18);
+                A_bar = m_cc->EvalBootstrap(A_bar, 2);
+                Y = m_cc->EvalBootstrap(Y, 2);
                 if (m_verbose) {
                     std::cout << "           After bootstrap. Y level: " << Y->GetLevel()
                               << ", A_bar level: " << A_bar->GetLevel() << std::endl;
@@ -291,8 +291,8 @@ public:
             if (m_verbose) {
                 std::cout << "  [Before Final] Bootstrapping. Y level: " << Y->GetLevel() << std::endl;
             }
-            A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
-            Y = m_cc->EvalBootstrap(Y, 2, 18);
+            A_bar = m_cc->EvalBootstrap(A_bar, 2);
+            Y = m_cc->EvalBootstrap(Y, 2);
             if (m_verbose) {
                 std::cout << "           After bootstrap. Y level: " << Y->GetLevel() << std::endl;
             }
@@ -304,7 +304,7 @@ public:
             if (m_verbose) {
                 std::cout << "  [Final] Bootstrapping. Y level before: " << Y->GetLevel() << std::endl;
             }
-            Y = m_cc->EvalBootstrap(Y, 2, 18);
+            Y = m_cc->EvalBootstrap(Y, 2);
             if (m_verbose) {
                 std::cout << "  [Final] Y level after: " << Y->GetLevel() << std::endl;
             }

@@ -7,6 +7,7 @@
 #include "lda_newcol.h"
 #include "lda_inference.h"
 #include "encryption.h"
+#include "../../common/evaluation_metrics.h"
 #include <openfhe.h>
 #include <iostream>
 #include <iomanip>
@@ -14,6 +15,10 @@
 #include <chrono>
 #include <filesystem>
 #include <cmath>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 using namespace lbcrypto;
 
@@ -64,9 +69,10 @@ std::vector<Ciphertext<DCRTPoly>> encryptClassData(
 }
 
 // Perform plaintext inference using encrypted training results
-double performInference(const LDAEncryptedResult& trainResult,
-                       const LDADataset& testSet,
-                       bool verbose = false) {
+// Returns ClassificationResult with Accuracy, Precision, Recall, F1
+EvalMetrics::ClassificationResult performInference(const LDAEncryptedResult& trainResult,
+                                                    const LDADataset& testSet,
+                                                    bool verbose = false) {
     // Compute Fisher direction: w = S_W^{-1} * (mu_1 - mu_0)
     size_t f = testSet.numFeatures;
     size_t f_tilde = testSet.paddedFeatures;
@@ -107,9 +113,9 @@ double performInference(const LDAEncryptedResult& trainResult,
         std::cout << "Threshold: " << threshold << std::endl;
     }
 
-    // Classify test samples
-    int correct = 0;
-    int total = 0;
+    // Classify test samples with full metrics
+    EvalMetrics::ClassificationResult result;
+    result.total = testSet.numSamples;
 
     for (size_t s = 0; s < testSet.numSamples; s++) {
         double projection = 0.0;
@@ -122,20 +128,24 @@ double performInference(const LDAEncryptedResult& trainResult,
             (projection > threshold ? 1 : 0) :
             (projection < threshold ? 1 : 0);
 
-        if (predicted == testSet.labels[s]) {
-            correct++;
-        }
-        total++;
+        int actual = testSet.labels[s];
+
+        if (predicted == actual) result.correct++;
+
+        // Confusion matrix (class 1 = positive)
+        if (predicted == 1 && actual == 1) result.tp++;
+        else if (predicted == 1 && actual == 0) result.fp++;
+        else if (predicted == 0 && actual == 1) result.fn++;
+        else result.tn++;
     }
 
-    double accuracy = 100.0 * correct / total;
-    return accuracy;
+    return result;
 }
 
 void saveEncryptedResults(const std::string& filename,
                           const LDAEncryptedResult& result,
                           const LDADataset& dataset,
-                          double accuracy,
+                          const EvalMetrics::ClassificationResult& classResult,
                           const LDATimingResult& timings) {
     std::ofstream file(filename);
     if (!file.is_open()) return;
@@ -210,8 +220,13 @@ void saveEncryptedResults(const std::string& filename,
     }
     file << std::endl;
 
-    file << "=== Accuracy ===" << std::endl;
-    file << accuracy << "%" << std::endl << std::endl;
+    file << "=== Classification Results ===" << std::endl;
+    file << "Accuracy:  " << classResult.accuracy() << "%" << std::endl;
+    file << "Precision: " << classResult.precision() << "%" << std::endl;
+    file << "Recall:    " << classResult.recall() << "%" << std::endl;
+    file << "F1 Score:  " << classResult.f1Score() << "%" << std::endl;
+    file << "(TP=" << classResult.tp << " FP=" << classResult.fp
+         << " FN=" << classResult.fn << " TN=" << classResult.tn << ")" << std::endl << std::endl;
 
     file << "=== Timing ===" << std::endl;
     file << "Mean computation: " << timings.meanComputation.count() << " s" << std::endl;
@@ -224,8 +239,15 @@ void saveEncryptedResults(const std::string& filename,
     std::cout << "Results saved to: " << filename << std::endl;
 }
 
+// Result structure for algorithm comparison
+struct LDAExperimentResult {
+    EvalMetrics::ClassificationResult classResult;
+    LDATimingResult timings;
+    bool valid = false;
+};
+
 template<typename LDAAlgorithm>
-void runEncryptedLDA(const std::string& algorithmName,
+LDAExperimentResult runEncryptedLDA(const std::string& algorithmName,
                      std::shared_ptr<Encryption> enc,
                      CryptoContext<DCRTPoly> cc,
                      KeyPair<DCRTPoly> keyPair,
@@ -240,43 +262,58 @@ void runEncryptedLDA(const std::string& algorithmName,
                      bool sbOnly = false,
                      const std::string& outputFile = "") {
 
-    std::cout << "\n" << std::string(60, '=') << std::endl;
-    std::cout << "  LDA with " << algorithmName << " Matrix Inversion" << std::endl;
-    std::cout << "  Bootstrapping: " << (useBootstrapping ? "ENABLED" : "DISABLED") << std::endl;
+    LDAExperimentResult expResult;
+
+    EvalMetrics::printExperimentHeader("LDA", algorithmName,
+        trainSet.numSamples, testSet.numSamples, trainSet.numFeatures);
+    std::cout << "  Bootstrapping:    " << (useBootstrapping ? "ENABLED" : "DISABLED") << std::endl;
     if (sbOnly) std::cout << "  Mode: S_B ONLY (quick test)" << std::endl;
-    std::cout << std::string(60, '=') << std::flush;
+    std::cout << std::string(60, '-') << std::flush;
 
     LDAAlgorithm lda(enc, cc, keyPair, rotIndices, multDepth, useBootstrapping);
 
-    LDATimingResult timings;
-    auto result = lda.trainWithTimings(classDataEncrypted, trainSet, inversionIterations, timings, verbose, sbOnly);
+    auto result = lda.trainWithTimings(classDataEncrypted, trainSet, inversionIterations,
+                                        expResult.timings, verbose, sbOnly);
 
     // Skip inference and full output in sbOnly mode
     if (sbOnly) {
         std::cout << "\n--- S_B Only Mode Complete ---" << std::endl;
-        return;
+        EvalMetrics::printExperimentFooter();
+        return expResult;
     }
 
     std::cout << "\n--- Inference on Test Set ---" << std::endl << std::flush;
-    double accuracy = performInference(result, testSet, verbose);
+    expResult.classResult = performInference(result, testSet, verbose);
+    expResult.valid = true;
 
-    std::cout << "\nTest Accuracy: " << std::setprecision(2) << std::fixed
-              << accuracy << "%" << std::endl;
+    // Print classification results
+    expResult.classResult.print(algorithmName);
 
-    std::cout << "\n--- Timing Summary ---" << std::endl;
-    std::cout << "Mean computation:   " << std::setprecision(3)
-              << timings.meanComputation.count() << " s" << std::endl;
-    std::cout << "S_B computation:    " << timings.sbComputation.count() << " s" << std::endl;
-    std::cout << "S_W computation:    " << timings.swComputation.count() << " s" << std::endl;
-    std::cout << "Matrix inversion:   " << timings.inversionTime.count() << " s" << std::endl;
-    std::cout << "Total training:     " << timings.totalTime.count() << std::endl << std::flush;
+    // Print timing summary
+    EvalMetrics::TimingResult timing;
+    timing.step1 = expResult.timings.meanComputation;
+    timing.step2 = expResult.timings.sbComputation + expResult.timings.swComputation;
+    timing.step3 = expResult.timings.inversionTime;
+    timing.total = expResult.timings.totalTime;
+    timing.step1Name = "Mean computation";
+    timing.step2Name = "S_B + S_W computation";
+    timing.step3Name = "Matrix inversion";
+    timing.print(algorithmName);
+
+    EvalMetrics::printExperimentFooter();
 
     if (!outputFile.empty()) {
-        saveEncryptedResults(outputFile, result, trainSet, accuracy, timings);
+        saveEncryptedResults(outputFile, result, trainSet, expResult.classResult, expResult.timings);
     }
+
+    return expResult;
 }
 
 int main(int argc, char* argv[]) {
+    #ifdef _OPENMP
+    omp_set_num_threads(1);
+    #endif
+
     bool debugMode = true;
     bool useBootstrapping = true;
     std::string algorithm = "both";
@@ -359,15 +396,10 @@ int main(int argc, char* argv[]) {
     uint32_t scalingModSize;
     uint32_t firstModSize;
 
-    if (!useBootstrapping) { // without bootstrapping
-        multDepth = 30; 
-        scalingModSize = 50;
-        firstModSize = 50;
-    }else { // with bootstrapping
-        multDepth = 29;
-        scalingModSize = 59;
-        firstModSize = 60;
-    }
+    // Unified parameters (bootstrapping always enabled for benchmarks)
+    multDepth = 28;
+    scalingModSize = 59;
+    firstModSize = 60;
 
     std::cout << "Max dimension: " << maxDim << std::endl;
     std::cout << "Multiplicative depth: " << multDepth << std::endl;
@@ -406,7 +438,7 @@ int main(int argc, char* argv[]) {
 
     if (useBootstrapping) {
         std::cout << "Setting up bootstrapping..." << std::flush;
-        std::vector<uint32_t> levelBudget = {4, 5};
+        std::vector<uint32_t> levelBudget = {4, 4};
         std::vector<uint32_t> bsgsDim = {0, 0};
         cc->EvalBootstrapSetup(levelBudget, bsgsDim, HD_PADDED_FEATURE * HD_PADDED_FEATURE);
         std::cout << " Setup done. Generating keys..." << std::flush;
@@ -419,11 +451,13 @@ int main(int argc, char* argv[]) {
     std::cout << " Encrypted " << classDataEncrypted.size() << " class datasets" << std::endl;
 
     // ========== Run Encrypted LDA ==========
-    int inversionIterations = 25;  // iterations for 16×16 matrix
+    int inversionIterations = getLDAInversionIterations(HD_PADDED_FEATURE);  // iterations for 16×16 matrix
+
+    LDAExperimentResult ar24Result, newcolResult;
 
     if (algorithm == "ar24" || algorithm == "both") {
         std::string outFile = outputFilePrefix.empty() ? "" : outputFilePrefix + "ar24_results.txt";
-        runEncryptedLDA<LDA_AR24>(
+        ar24Result = runEncryptedLDA<LDA_AR24>(
             "AR24",
             enc, cc, keyPair, rotIndices,
             classDataEncrypted, trainSet, testSet,
@@ -432,11 +466,25 @@ int main(int argc, char* argv[]) {
 
     if (algorithm == "newcol" || algorithm == "both") {
         std::string outFile = outputFilePrefix.empty() ? "" : outputFilePrefix + "newcol_results.txt";
-        runEncryptedLDA<LDA_NewCol>(
+        newcolResult = runEncryptedLDA<LDA_NewCol>(
             "NewCol",
             enc, cc, keyPair, rotIndices,
             classDataEncrypted, trainSet, testSet,
             multDepth, inversionIterations, useBootstrapping, verbose, sbOnly, outFile);
+    }
+
+    // Print comparison summary if both algorithms were run
+    if (ar24Result.valid && newcolResult.valid) {
+        EvalMetrics::TimingResult ar24Timing, newcolTiming;
+        ar24Timing.total = ar24Result.timings.totalTime;
+        newcolTiming.total = newcolResult.timings.totalTime;
+
+        EvalMetrics::printComparisonSummary(
+            "LDA",
+            ar24Timing, newcolTiming,
+            ar24Result.classResult.f1Score(),
+            newcolResult.classResult.f1Score(),
+            "F1 Score");
     }
 
     std::cout << "\n" << std::string(60, '=') << std::endl;

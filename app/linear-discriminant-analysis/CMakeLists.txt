@@ -10,7 +10,7 @@ target_include_directories(lda_plaintext
 
 target_compile_definitions(lda_plaintext
     PRIVATE
-    DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
+    DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/dataset"
 )
 
 target_compile_features(lda_plaintext PRIVATE cxx_std_17)
@@ -41,7 +41,7 @@ target_link_libraries(lda_encrypted
 
 target_compile_definitions(lda_encrypted
     PRIVATE
-    DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
+    DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/dataset"
 )
 
 target_compile_features(lda_encrypted PRIVATE cxx_std_17)
@@ -72,7 +72,7 @@ target_link_libraries(test_inversion_only
 
 target_compile_definitions(test_inversion_only
     PRIVATE
-    DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
+    DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/dataset"
 )
 
 target_compile_features(test_inversion_only PRIVATE cxx_std_17)
@@ -103,7 +103,7 @@ target_link_libraries(benchmark_lda
 
 target_compile_definitions(benchmark_lda
     PRIVATE
-    DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
+    DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/dataset"
     BENCHMARK_VERBOSE=0
 )
 
@@ -135,7 +135,7 @@ target_link_libraries(benchmark_lda_verbose
 
 target_compile_definitions(benchmark_lda_verbose
     PRIVATE
-    DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/data"
+    DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/dataset"
     BENCHMARK_VERBOSE=1
 )
 

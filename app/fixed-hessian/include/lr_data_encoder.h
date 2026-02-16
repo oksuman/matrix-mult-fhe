@@ -21,11 +21,17 @@ struct LRDataset {
     std::vector<double> featureMax;
 };
 
-// Constants for HE packing
-static const int LR_RAW_FEATURES = 13;        // original features (heart disease)
-static const int LR_FEATURES = 16;            // 13 features + 1 bias + 2 padding
-static const int LR_BATCH_SIZE = 128;         // samples per batch (B): 64 or 128
-static const int LR_MATRIX_DIM = LR_BATCH_SIZE;  // d: matrix dimension
+// Constants for HE packing - dataset dependent
+#ifdef DATASET_DIABETES
+    static const int LR_RAW_FEATURES = 8;         // original features (diabetes: 8)
+    static const int LR_BATCH_SIZE = 64;          // samples per batch: 64
+#else  // DATASET_HEART (default)
+    static const int LR_RAW_FEATURES = 13;        // original features (heart disease: 13)
+    static const int LR_BATCH_SIZE = 128;         // samples per batch: 128
+#endif
+
+static const int LR_FEATURES = 16;                // raw + 1 bias + padding to 16
+static const int LR_MATRIX_DIM = LR_BATCH_SIZE;   // d: matrix dimension
 static const int LR_SLOTS = LR_MATRIX_DIM * LR_MATRIX_DIM;  // d*d
 
 class LRDataEncoder {
@@ -137,9 +143,12 @@ public:
     // Add bias column (constant 1.0) and pad to 16 features
     static void addBiasAndPad(LRDataset& dataset) {
         for (size_t i = 0; i < dataset.numSamples; i++) {
-            dataset.samples[i].push_back(1.0);   // feature[13] = bias
-            dataset.samples[i].push_back(0.0);   // feature[14] = padding
-            dataset.samples[i].push_back(0.0);   // feature[15] = padding
+            // Add bias
+            dataset.samples[i].push_back(1.0);
+            // Pad remaining to reach 16 features
+            while (dataset.samples[i].size() < LR_FEATURES) {
+                dataset.samples[i].push_back(0.0);
+            }
         }
         dataset.numFeatures = LR_FEATURES;  // 16
     }

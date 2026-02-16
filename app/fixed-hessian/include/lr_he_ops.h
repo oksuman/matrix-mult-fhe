@@ -230,7 +230,7 @@ public:
         return result;
     }
 
-    // Invert an f×f matrix using Schulz iteration
+    // Invert an f×f matrix using iterative method
     static std::vector<double> invertMatrix(const std::vector<double>& A, int d,
                                             int iterations = 20) {
         std::vector<double> I(d * d, 0.0);

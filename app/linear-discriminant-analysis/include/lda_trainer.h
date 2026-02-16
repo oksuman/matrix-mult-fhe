@@ -253,7 +253,7 @@ public:
         result.Sb = Sb;
 
         // ========== Step 5: Compute S_W^{-1} ==========
-        if (verbose) std::cout << "\n[Step 5] Computing S_W^{-1} (Schulz iteration, " << inversionIterations << " iters)..." << std::endl;
+        if (verbose) std::cout << "\n[Step 5] Computing S_W^{-1} (iterative inversion, " << inversionIterations << " iters)..." << std::endl;
 
         // For inversion, we need to work with actual matrix dimension
         // Extract the f x f submatrix from the padded matrix

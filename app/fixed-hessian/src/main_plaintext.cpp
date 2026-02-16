@@ -6,76 +6,66 @@
 #include <vector>
 
 int main() {
+#ifdef DATASET_DIABETES
+    std::string trainPath = std::string(DATA_DIR) + "/diabetes_train_64.csv";
+    std::string testPath = std::string(DATA_DIR) + "/diabetes_test_256.csv";
+    std::string datasetName = "Diabetes (8 features, 64 train)";
+#else
     std::string trainPath = (LR_BATCH_SIZE == 64)
         ? std::string(DATA_DIR) + "/heart_train.csv"
         : std::string(DATA_DIR) + "/heart_combined_128.csv";
-    std::string testPath64 = std::string(DATA_DIR) + "/heart_test.csv";
-    std::string testPath128 = std::string(DATA_DIR) + "/heart_test_128.csv";
+    std::string testPath = std::string(DATA_DIR) + "/heart_test_128.csv";
+    std::string datasetName = "Heart Disease (13 features, 128 train)";
+#endif
 
     std::cout << "========================================" << std::endl;
     std::cout << " Logistic Regression (HE-friendly)" << std::endl;
-    std::cout << " Plaintext Simulation — Heart Disease" << std::endl;
+    std::cout << " Plaintext Simulation — " << datasetName << std::endl;
     std::cout << "========================================" << std::endl;
 
     // Load datasets
     auto trainSet = LRDataEncoder::loadCSV(trainPath);
-    auto testSet64 = LRDataEncoder::loadCSV(testPath64);
-    auto testSet128 = LRDataEncoder::loadCSV(testPath128);
+    auto testSet = LRDataEncoder::loadCSV(testPath);
 
     // Normalize
     LRDataEncoder::normalizeFeatures(trainSet);
-    LRDataEncoder::normalizeWithParams(testSet64, trainSet);
-    LRDataEncoder::normalizeWithParams(testSet128, trainSet);
+    LRDataEncoder::normalizeWithParams(testSet, trainSet);
 
     // Add bias and pad
     LRDataEncoder::addBiasAndPad(trainSet);
-    LRDataEncoder::addBiasAndPad(testSet64);
-    LRDataEncoder::addBiasAndPad(testSet128);
+    LRDataEncoder::addBiasAndPad(testSet);
+
+    std::cout << "Train: " << trainSet.numSamples << " samples, "
+              << LR_RAW_FEATURES << " features" << std::endl;
+    std::cout << "Test: " << testSet.numSamples << " samples" << std::endl;
 
     const int NUM_BATCHES = 1;
     auto pre = LRHETrainer::precompute(trainSet, NUM_BATCHES, false);
 
+#ifdef DATASET_DIABETES
+    // Diabetes: needs more iterations for SFH to converge
+    std::vector<int> iters = {1, 2, 4, 8, 16, 32, 64, 128, 256};
+#else
     std::vector<int> iters = {1, 2, 4, 8, 16, 32, 64};
+#endif
 
-    // ============ 64 test samples ============
-    std::cout << "\n=== Simplified 64test ===" << std::endl;
+    // ============ Simplified Fixed Hessian ============
+    std::cout << "\n=== Simplified Fixed Hessian ===" << std::endl;
     for (int nIter : iters) {
         auto result = LRHETrainer::trainSimplified(pre, nIter, false);
-        auto inf = LRHETrainer::inference(result, testSet64, false);
-        std::cout << "Test Accuracy:  " << std::fixed << std::setprecision(4)
+        auto inf = LRHETrainer::inference(result, testSet, false);
+        std::cout << "iter=" << std::setw(3) << nIter
+                  << " Accuracy: " << std::fixed << std::setprecision(4)
                   << (double)inf.correct / inf.total << std::endl;
     }
 
-    std::cout << "\n=== Full Fixed 64test ===" << std::endl;
+    // ============ Full Fixed Hessian ============
+    std::cout << "\n=== Full Fixed Hessian ===" << std::endl;
     for (int nIter : iters) {
         auto result = LRHETrainer::trainFixed(pre, nIter, false);
-        auto inf = LRHETrainer::inference(result, testSet64, false);
-        std::cout << "Test Accuracy:  " << std::fixed << std::setprecision(4)
-                  << (double)inf.correct / inf.total << std::endl;
-    }
-
-    // ============ 128 test samples ============
-    std::cout << "\n=== Simplified 128test ===" << std::endl;
-    for (int nIter : iters) {
-        auto result = LRHETrainer::trainSimplified(pre, nIter, (nIter <= 2));
-        auto inf = LRHETrainer::inference(result, testSet128, false);
-        std::cout << "Test Accuracy:  " << std::fixed << std::setprecision(4)
-                  << (double)inf.correct / inf.total << std::endl;
-        // Print weights for comparison with encrypted
-        if (nIter == 1) {
-            std::cout << "  Weights: ";
-            for (int j = 0; j < 14; j++) {
-                std::cout << std::setw(8) << std::setprecision(4) << result.weights[j] << " ";
-            }
-            std::cout << std::endl;
-        }
-    }
-
-    std::cout << "\n=== Full Fixed 128test ===" << std::endl;
-    for (int nIter : iters) {
-        auto result = LRHETrainer::trainFixed(pre, nIter, false);
-        auto inf = LRHETrainer::inference(result, testSet128, false);
-        std::cout << "Test Accuracy:  " << std::fixed << std::setprecision(4)
+        auto inf = LRHETrainer::inference(result, testSet, false);
+        std::cout << "iter=" << std::setw(3) << nIter
+                  << " Accuracy: " << std::fixed << std::setprecision(4)
                   << (double)inf.correct / inf.total << std::endl;
     }
 

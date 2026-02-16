@@ -1,5 +1,5 @@
 // lr_encrypted_ar24.h
-// AR24 matrix multiplication and Schulz-iteration inversion for 16x16 matrices
+// AR24 matrix multiplication and iterative inversion for 16x16 matrices
 #pragma once
 
 #include "lr_encrypted_base.h"
@@ -110,7 +110,7 @@ public:
         : LREncryptedBase(enc, cc, keyPair, rotIndices, multDepth, useBootstrapping)
     {}
 
-    // Matrix inversion using AR24 multiplication + Schulz iteration
+    // Matrix inversion using AR24 multiplication
     Ciphertext<DCRTPoly> eval_inverse(const Ciphertext<DCRTPoly>& M, int d,
                                        int iterations, int actualDim,
                                        double traceUpperBound) override {
@@ -173,13 +173,13 @@ public:
             // Check level and bootstrap if needed
             if (m_useBootstrapping && (int)Y->GetLevel() >= m_multDepth - 3) {
                 if (m_verbose) {
-                    std::cout << "  [Iter " << i << "] Bootstrapping. Y level: "
-                              << Y->GetLevel() << std::endl;
+                    std::cout << "  [Iter " << i << "] Bootstrapping (pre-level: "
+                              << Y->GetLevel() << "/" << m_multDepth << ")" << std::endl;
                 }
                 A_bar->SetSlots(d * d);
-                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+                A_bar = m_cc->EvalBootstrap(A_bar, 2);
                 Y->SetSlots(d * d);
-                Y = m_cc->EvalBootstrap(Y, 2, 18);
+                Y = m_cc->EvalBootstrap(Y, 2);
 
                 A_bar->SetSlots(d * d * s);
                 A_bar = clean(A_bar, d, s);
@@ -201,12 +201,12 @@ public:
         // Final multiplication
         if (m_useBootstrapping && (int)Y->GetLevel() >= m_multDepth - 3) {
             if (m_verbose) {
-                std::cout << "  [Before Final] Bootstrapping. Y level: " << Y->GetLevel() << std::endl;
+                std::cout << "  [Before Final] Bootstrapping (pre-level: " << Y->GetLevel() << "/" << m_multDepth << ")" << std::endl;
             }
             A_bar->SetSlots(d * d);
-            A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+            A_bar = m_cc->EvalBootstrap(A_bar, 2);
             Y->SetSlots(d * d);
-            Y = m_cc->EvalBootstrap(Y, 2, 18);
+            Y = m_cc->EvalBootstrap(Y, 2);
             A_bar->SetSlots(d * d * s);
             Y->SetSlots(d * d * s);
         }

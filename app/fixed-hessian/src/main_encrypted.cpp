@@ -1,6 +1,6 @@
 // main_encrypted.cpp
 // Encrypted Logistic Regression (Fixed Hessian) with AR24 vs NewCol comparison
-// Heart Disease dataset, CKKS homomorphic encryption
+// CKKS homomorphic encryption
 
 #include "lr_data_encoder.h"
 #include "lr_he_trainer.h"
@@ -291,7 +291,7 @@ void runFixedHessian(const std::string& algorithmName,
     for (int j = 0; j < LR_RAW_FEATURES; j++) {
         std::cout << std::setw(8) << std::setprecision(4) << std::fixed << weights[j] << " ";
     }
-    std::cout << "\n  Bias (w[13]): " << weights[LR_RAW_FEATURES] << std::endl;
+    std::cout << "\n  Bias (w[" << LR_RAW_FEATURES << "]): " << weights[LR_RAW_FEATURES] << std::endl;
 
     performInference(weights, testSet, algorithmName + " Fixed Hessian");
 
@@ -594,10 +594,10 @@ void runSimplifiedHessian(std::shared_ptr<Encryption> enc,
 
         // Check if bootstrapping needed
         if ((int)w_enc->GetLevel() >= multDepth - 3) {
-            std::cout << " -> Bootstrapping...";
+            std::cout << " -> Bootstrapping (pre-level: " << w_enc->GetLevel() << "/" << multDepth << ")...";
             // Reduce to 16 slots for bootstrap
             w_enc->SetSlots(f);
-            w_enc = cc->EvalBootstrap(w_enc);
+            w_enc = cc->EvalBootstrap(w_enc, 2);
             // Expand back to 16-replicated (256 slots)
             // SetSlots automatically replicates to 16-replicated form, no folding needed
             w_enc->SetSlots(slots16);
@@ -647,7 +647,7 @@ void runSimplifiedHessian(std::shared_ptr<Encryption> enc,
     for (int j = 0; j < LR_RAW_FEATURES; j++) {
         std::cout << std::setw(8) << std::setprecision(4) << std::fixed << weights[j] << " ";
     }
-    std::cout << "\n  Bias (w[13]): " << weights[LR_RAW_FEATURES] << std::endl;
+    std::cout << "\n  Bias (w[" << LR_RAW_FEATURES << "]): " << weights[LR_RAW_FEATURES] << std::endl;
 
     performInference(weights, testSet, "Simplified Fixed Hessian (Newton-Raphson)");
 
@@ -672,7 +672,11 @@ int main(int argc, char* argv[]) {
     bool useBootstrapping = true;
     std::string algorithm = "none";  // "ar24", "newcol", "both", "none", "simplified"
     int inversionIterations = 25;    // For AR24/NewCol matrix inversion
-    int simplifiedIterations = 8;    // For Simplified training iterations
+#ifdef DATASET_DIABETES
+    int simplifiedIterations = 256;  // Diabetes: slower convergence, needs more iterations
+#else
+    int simplifiedIterations = 8;    // Heart Disease: fast convergence
+#endif
 
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
@@ -697,16 +701,25 @@ int main(int argc, char* argv[]) {
     std::cout << "###############################################################" << std::endl;
     std::cout << "#                                                             #" << std::endl;
     std::cout << "#    Logistic Regression (Fixed Hessian) - Encrypted Mode     #" << std::endl;
-    std::cout << "#    Heart Disease Dataset                                    #" << std::endl;
+#ifdef DATASET_DIABETES
+    std::cout << "#    Diabetes Dataset (8 features, 64 train samples)          #" << std::endl;
+#else
+    std::cout << "#    Heart Disease Dataset (13 features, 128 train samples)   #" << std::endl;
+#endif
     std::cout << "#    AR24 vs NewCol Matrix Inversion Comparison               #" << std::endl;
     std::cout << "#                                                             #" << std::endl;
     std::cout << "###############################################################" << std::endl;
 
     // ========== Step 1: Load and preprocess data ==========
+#ifdef DATASET_DIABETES
+    std::string trainPath = std::string(DATA_DIR) + "/diabetes_train_64.csv";
+    std::string testPath = std::string(DATA_DIR) + "/diabetes_test_256.csv";
+#else
     std::string trainPath = (LR_BATCH_SIZE == 64)
         ? std::string(DATA_DIR) + "/heart_train.csv"
         : std::string(DATA_DIR) + "/heart_combined_128.csv";
     std::string testPath = std::string(DATA_DIR) + "/heart_test_128.csv";
+#endif
 
     std::cout << "\n[1] Loading datasets..." << std::endl;
     auto trainSet = LRDataEncoder::loadCSV(trainPath);
@@ -783,7 +796,7 @@ int main(int argc, char* argv[]) {
 
     if (useBootstrapping) {
         std::cout << "Setting up bootstrapping..." << std::flush;
-        std::vector<uint32_t> levelBudget = {4, 5};
+        std::vector<uint32_t> levelBudget = {4, 4};
         std::vector<uint32_t> bsgsDim = {0, 0};
         // Setup for both 256 slots (Full Fixed) and 16 slots (Simplified)
         cc->EvalBootstrapSetup(levelBudget, bsgsDim, LR_FEATURES * LR_FEATURES);  // 256 slots

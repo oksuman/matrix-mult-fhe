@@ -1,5 +1,5 @@
 // lr_encrypted_newcol.h
-// NewCol matrix multiplication and Schulz-iteration inversion for 16x16 matrices
+// NewCol matrix multiplication and iterative inversion for 16x16 matrices
 #pragma once
 
 #include "lr_encrypted_base.h"
@@ -171,7 +171,7 @@ public:
         : LREncryptedBase(enc, cc, keyPair, rotIndices, multDepth, useBootstrapping)
     {}
 
-    // Matrix inversion using NewCol multiplication + Schulz iteration
+    // Matrix inversion using NewCol multiplication
     Ciphertext<DCRTPoly> eval_inverse(const Ciphertext<DCRTPoly>& M, int d,
                                        int iterations, int actualDim,
                                        double traceUpperBound) override {
@@ -219,15 +219,17 @@ public:
         }
 
         for (int i = 0; i < iterations - 1; i++) {
+            // Check level and bootstrap if needed
             if (m_useBootstrapping && (int)Y->GetLevel() >= m_multDepth - 2) {
                 if (m_verbose) {
-                    std::cout << "  [Iter " << i << "] Bootstrapping. Y level: "
-                              << Y->GetLevel() << std::endl;
+                    std::cout << "  [Iter " << i << "] Bootstrapping (pre-level: "
+                              << Y->GetLevel() << "/" << m_multDepth << ")" << std::endl;
                 }
-                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
-                Y = m_cc->EvalBootstrap(Y, 2, 18);
+                A_bar = m_cc->EvalBootstrap(A_bar, 2);
+                Y = m_cc->EvalBootstrap(Y, 2);
                 if (m_verbose) {
-                    std::cout << "           After bootstrap. Y level: " << Y->GetLevel() << std::endl;
+                    std::cout << "           After bootstrap. Y level: " << Y->GetLevel()
+                              << ", remaining iters: " << (iterations - 1 - i) << std::endl;
                 }
             }
 
@@ -243,16 +245,26 @@ public:
         // Bootstrap before final multiplication if needed
         if (m_useBootstrapping && (int)Y->GetLevel() >= m_multDepth - 2) {
             if (m_verbose) {
-                std::cout << "  [Before Final] Bootstrapping. Y level: " << Y->GetLevel() << std::endl;
+                std::cout << "  [Before Final] Bootstrapping (pre-level: " << Y->GetLevel() << "/" << m_multDepth << ")" << std::endl;
             }
-            A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
-            Y = m_cc->EvalBootstrap(Y, 2, 18);
+            A_bar = m_cc->EvalBootstrap(A_bar, 2);
+            Y = m_cc->EvalBootstrap(Y, 2);
+            if (m_verbose) {
+                std::cout << "           After bootstrap. Y level: " << Y->GetLevel()
+                          << ", remaining: final mult only" << std::endl;
+            }
         }
 
         Y = eval_mult_NewCol(Y, m_cc->EvalAdd(pI, A_bar), s, B, ng, nb, np, d);
 
-        if (m_useBootstrapping && (int)Y->GetLevel() >= m_multDepth - 2) {
-            Y = m_cc->EvalBootstrap(Y, 2, 18);
+        if (m_useBootstrapping && (int)Y->GetLevel() >= m_multDepth - 1) {
+            if (m_verbose) {
+                std::cout << "  [After Final] Bootstrapping (pre-level: " << Y->GetLevel() << "/" << m_multDepth << ")" << std::endl;
+            }
+            Y = m_cc->EvalBootstrap(Y, 2);
+            if (m_verbose) {
+                std::cout << "           After bootstrap. Y level: " << Y->GetLevel() << std::endl;
+            }
         }
 
         if (m_verbose) {

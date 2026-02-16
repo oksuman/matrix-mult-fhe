@@ -25,7 +25,7 @@ using namespace lbcrypto;
 
 // ============ Configuration ============
 const int NUM_SAMPLES = 64;           // Training samples
-const int INVERSION_ITERATIONS = 25;  // Newton-Schulz iterations
+const int INVERSION_ITERATIONS = 25;  // Inversion iterations
 const bool USE_BOOTSTRAPPING = true;
 const int NUM_TRIALS = 1;             // Number of trials for averaging
 

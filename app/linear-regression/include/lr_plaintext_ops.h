@@ -78,8 +78,7 @@ public:
         return I;
     }
 
-    // Matrix inversion using Newton-Schulz iteration
-    // Y_{i+1} = Y_i * (2I - A * Y_i) = Y_i * (I + (I - A * Y_i))
+    // Matrix inversion using iterative method
     static std::vector<double> invertMatrix(const std::vector<double>& A, int d,
                                             int iterations, bool verbose = false) {
         auto I = identity(d);

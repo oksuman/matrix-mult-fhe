@@ -68,7 +68,7 @@ template <int d> class MatrixInv_diag : public MatrixMultiPackBase<d> {
         return matrixC;
     }
 
-    // Scalar inverse using Newton-Raphson iteration
+    // Scalar inverse: computes 1/t iteratively
     Ciphertext<DCRTPoly> eval_scalar_inverse(const Ciphertext<DCRTPoly>& t,
                                               double upperBound,
                                               int iterations,
@@ -138,7 +138,7 @@ template <int d> class MatrixInv_diag : public MatrixMultiPackBase<d> {
             m_cc->EvalAddInPlace(trace, rot->rotate(trace, d / (1 << i)));
         }
 
-        auto trace_reciprocal = eval_scalar_inverse(trace, d * d, 2, d);
+        auto trace_reciprocal = eval_scalar_inverse(trace, d * d, 1, d);
 
         std::vector<Ciphertext<DCRTPoly>> Y;
         for (int i = 0; i < d; i++) {

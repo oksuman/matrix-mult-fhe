@@ -8,20 +8,18 @@
 class LDA_AR24 : public LDAEncryptedBase {
 private:
     // AR24-specific mask generation for matrix multiplication
-    std::vector<double> generatePhiMsk(int k, int d, int s) {
-        std::vector<double> msk(d * d * s, 0);
-        for (int i = k; i < d * d * s; i += d) {
+    std::vector<double> generatePhiMsk(int k, int d) {
+        std::vector<double> msk(d * d, 0);
+        for (int i = k; i < d * d; i += d) {
             msk[i] = 1;
         }
         return msk;
     }
 
-    std::vector<double> generatePsiMsk(int k, int d, int s) {
-        std::vector<double> msk(d * d * s, 0);
-        for (int i = 0; i < s; i++) {
-            for (int j = i * d * d + k * d; j < i * d * d + k * d + d; j++) {
-                msk[j] = 1;
-            }
+    std::vector<double> generatePsiMsk(int k, int d) {
+        std::vector<double> msk(d * d, 0);
+        for (int j = k; j < k + d; j++) {
+            msk[j] = 1;
         }
         return msk;
     }
@@ -56,7 +54,7 @@ private:
 
         // Build Tilde_A
         for (int i = 0; i < B; i++) {
-            auto phi_si = m_cc->MakeCKKSPackedPlaintext(generatePhiMsk(s * i, d, s), 1, 0, nullptr, num_slots);
+            auto phi_si = m_cc->MakeCKKSPackedPlaintext(generatePhiMsk(s * i, d), 1, 0, nullptr, d * d);
             auto tmp = m_cc->EvalMult(matrixA_copy, phi_si);
             tmp = rot.rotate(tmp, s * i);
             for (int j = 0; j < (int)log2(d); j++) {
@@ -67,7 +65,7 @@ private:
 
         // Build Tilde_B
         for (int i = 0; i < B; i++) {
-            auto psi_si = m_cc->MakeCKKSPackedPlaintext(generatePsiMsk(s * i, d, s), 1, 0, nullptr, num_slots);
+            auto psi_si = m_cc->MakeCKKSPackedPlaintext(generatePsiMsk(s * i, d), 1, 0, nullptr, d * d);
             auto tmp = m_cc->EvalMult(matrixB_copy, psi_si);
             tmp = rot.rotate(tmp, s * i * d);
             for (int j = 0; j < (int)log2(d); j++) {
@@ -302,9 +300,9 @@ public:
                 }
 
                 A_bar->SetSlots(d * d);
-                A_bar = m_cc->EvalBootstrap(A_bar, 2);
+                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
                 Y->SetSlots(d * d);
-                Y = m_cc->EvalBootstrap(Y, 2);
+                Y = m_cc->EvalBootstrap(Y, 2, 18);
 
                 // AFTER bootstrap, BEFORE clean
                 if (m_verbose) {
@@ -388,9 +386,9 @@ public:
                 std::cout << "  [Before Final] Bootstrapping. Y level: " << Y->GetLevel() << std::endl;
             }
             A_bar->SetSlots(d * d);
-            A_bar = m_cc->EvalBootstrap(A_bar, 2);
+            A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
             Y->SetSlots(d * d);
-            Y = m_cc->EvalBootstrap(Y, 2);
+            Y = m_cc->EvalBootstrap(Y, 2, 18);
             A_bar->SetSlots(d * d * s);
             Y->SetSlots(d * d * s);
             if (m_verbose) {

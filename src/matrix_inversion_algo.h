@@ -7,7 +7,7 @@
 using namespace lbcrypto;
 
 // Scalar inversion iterations (unified)
-constexpr int SCALAR_INV_ITERATIONS = 2;
+constexpr int SCALAR_INV_ITERATIONS = 1;
 
 // Base class for matrix inverse operations
 template <int d> class MatrixInverseBase {

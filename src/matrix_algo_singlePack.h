@@ -71,10 +71,8 @@ class MatrixOperationBase {
         return v;
     }
 
-    // Scalar inverse using Newton-Raphson iteration: 1/t with upper bound
-    // upperBound: upper bound of trace value (typically d*d for matrices in [-1,1])
-    // iterations: number of Newton-Raphson iterations (default 2)
-    // batchSize: slot count for the ciphertext
+    // Scalar inverse: computes 1/t iteratively
+    // x = x * (1 + t_bar), t_bar = t_bar^2
     Ciphertext<DCRTPoly> eval_scalar_inverse(const Ciphertext<DCRTPoly>& t,
                                               double upperBound,
                                               int iterations,
@@ -485,9 +483,9 @@ template <int d> class MatrixMult_AR24 : public MatrixOperationBase<d> {
 
     // k: col number 0~d-1
     std::vector<double> generatePhiMsk(int k) {
-        std::vector<double> msk(d * d * s, 0);
+        std::vector<double> msk(d * d, 0);
 
-        for (int i = k; i < d * d * s; i += d) {
+        for (int i = k; i < d * d; i += d) {
             msk[i] = 1;
         }
         return msk;
@@ -495,19 +493,16 @@ template <int d> class MatrixMult_AR24 : public MatrixOperationBase<d> {
 
     // k: row number 0~d-1
     std::vector<double> generatePsiMsk(int k) {
-        std::vector<double> msk(d * d * s, 0);
+        std::vector<double> msk(d * d, 0);
 
-        for (int i = 0; i < s; i++) {
-            for (int j = i * d * d + k * d; j < i * d * d + k * d + d; j++) {
-                msk[j] = 1;
-            }
+        for (int j = k; j < k + d; j++) {
+            msk[j] = 1;
         }
         return msk;
     }
 
     Ciphertext<DCRTPoly> eval_mult(const Ciphertext<DCRTPoly> &matA,
                                    const Ciphertext<DCRTPoly> &matB) override {
-        int num_slots = d * d * s;
         auto matrixC = this->getZero()->Clone();
 
         auto matrixA = matA->Clone();
@@ -527,7 +522,7 @@ template <int d> class MatrixMult_AR24 : public MatrixOperationBase<d> {
 
         for (int i = 0; i < B; i++) {
             auto phi_si = m_cc->MakeCKKSPackedPlaintext(
-                generatePhiMsk(s * i), 1, 0, nullptr, num_slots);
+                generatePhiMsk(s * i), 1, 0, nullptr, d * d);
             auto tmp = m_cc->EvalMult(matrixA, phi_si);
             tmp = rot.rotate(tmp, s * i);
             for (int j = 0; j < log2(d); j++) {
@@ -538,7 +533,7 @@ template <int d> class MatrixMult_AR24 : public MatrixOperationBase<d> {
 
         for (int i = 0; i < B; i++) {
             auto psi_si = m_cc->MakeCKKSPackedPlaintext(
-                generatePsiMsk(s * i), 1, 0, nullptr, num_slots);
+                generatePsiMsk(s * i), 1, 0, nullptr, d * d);
             auto tmp = m_cc->EvalMult(matrixB, psi_si);
             tmp = rot.rotate(tmp, s * i * d);
             for (int j = 0; j < log2(d); j++) {

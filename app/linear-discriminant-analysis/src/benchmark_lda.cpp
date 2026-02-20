@@ -409,7 +409,7 @@ int main() {
     // Setup encryption
     std::cout << "\n--- Setting up CKKS Encryption ---" << std::endl;
     int maxDim = std::max(trainSet.paddedSamples, trainSet.paddedFeatures);
-    int multDepth = 28;
+    int multDepth = 30;
     uint32_t scalingModSize = 59;
     uint32_t firstModSize = 60;
 

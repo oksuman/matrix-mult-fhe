@@ -68,7 +68,7 @@ void runInversionBenchmark(int numRuns = 1) {
     for (int run = 0; run < numRuns; run++) {
         // Generate random invertible matrix with different seed per run
         std::vector<double> matrix(d * d);
-        std::mt19937 gen(42 + run);  // Different seed per trial
+        std::mt19937 gen(1000 + run);  // Different seed per trial
         std::uniform_real_distribution<double> dis(-1.0, 1.0);
         do {
             for (int i = 0; i < d * d; i++) {
@@ -123,7 +123,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Runs per dimension: " << numRuns << std::endl;
 
     #ifdef _OPENMP
-    // omp_set_num_threads(1);  // Commented for multi-thread quick test
+    omp_set_num_threads(1);
     std::cout << "OpenMP Threads: " << omp_get_max_threads() << std::endl;
     #else
     std::cout << "OpenMP: Not enabled (single thread)" << std::endl;

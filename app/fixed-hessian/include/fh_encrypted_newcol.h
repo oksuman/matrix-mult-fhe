@@ -1,10 +1,10 @@
-// lr_encrypted_newcol.h
+// fh_encrypted_newcol.h
 // NewCol matrix multiplication and iterative inversion for 16x16 matrices
 #pragma once
 
-#include "lr_encrypted_base.h"
+#include "fh_encrypted_base.h"
 
-class LR_NewCol : public LREncryptedBase {
+class FH_NewCol : public FHEncryptedBase {
 private:
     // NewCol-specific mask generation
     std::vector<double> generateMaskVector(int batch_size, int k, int d) {
@@ -162,13 +162,13 @@ private:
     }
 
 public:
-    LR_NewCol(std::shared_ptr<Encryption> enc,
+    FH_NewCol(std::shared_ptr<Encryption> enc,
               CryptoContext<DCRTPoly> cc,
               KeyPair<DCRTPoly> keyPair,
               std::vector<int> rotIndices,
               int multDepth,
               bool useBootstrapping = true)
-        : LREncryptedBase(enc, cc, keyPair, rotIndices, multDepth, useBootstrapping)
+        : FHEncryptedBase(enc, cc, keyPair, rotIndices, multDepth, useBootstrapping)
     {}
 
     // Matrix inversion using NewCol multiplication
@@ -225,8 +225,8 @@ public:
                     std::cout << "  [Iter " << i << "] Bootstrapping (pre-level: "
                               << Y->GetLevel() << "/" << m_multDepth << ")" << std::endl;
                 }
-                A_bar = m_cc->EvalBootstrap(A_bar, 2);
-                Y = m_cc->EvalBootstrap(Y, 2);
+                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+                Y = m_cc->EvalBootstrap(Y, 2, 18);
                 if (m_verbose) {
                     std::cout << "           After bootstrap. Y level: " << Y->GetLevel()
                               << ", remaining iters: " << (iterations - 1 - i) << std::endl;
@@ -247,8 +247,8 @@ public:
             if (m_verbose) {
                 std::cout << "  [Before Final] Bootstrapping (pre-level: " << Y->GetLevel() << "/" << m_multDepth << ")" << std::endl;
             }
-            A_bar = m_cc->EvalBootstrap(A_bar, 2);
-            Y = m_cc->EvalBootstrap(Y, 2);
+            A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+            Y = m_cc->EvalBootstrap(Y, 2, 18);
             if (m_verbose) {
                 std::cout << "           After bootstrap. Y level: " << Y->GetLevel()
                           << ", remaining: final mult only" << std::endl;
@@ -261,7 +261,7 @@ public:
             if (m_verbose) {
                 std::cout << "  [After Final] Bootstrapping (pre-level: " << Y->GetLevel() << "/" << m_multDepth << ")" << std::endl;
             }
-            Y = m_cc->EvalBootstrap(Y, 2);
+            Y = m_cc->EvalBootstrap(Y, 2, 18);
             if (m_verbose) {
                 std::cout << "           After bootstrap. Y level: " << Y->GetLevel() << std::endl;
             }

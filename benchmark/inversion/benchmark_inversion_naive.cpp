@@ -17,9 +17,14 @@ template <int d>
 void runInversionBenchmark(int numRuns = 1) {
     std::cout << "\n========== Naive Inversion d=" << d << " ==========" << std::endl;
 
-    // Unified parameters
+    // Dimension-specific parameters (no bootstrapping)
     int r = getInversionIterations(d);
-    int multDepth = MULT_DEPTH;
+    int multDepth;
+    if constexpr (d == 4) {
+        multDepth = 23;
+    } else {
+        multDepth = 28;  // d=8
+    }
     uint32_t scaleModSize = 59;
     uint32_t firstModSize = 60;
 
@@ -53,7 +58,7 @@ void runInversionBenchmark(int numRuns = 1) {
     for (int run = 0; run < numRuns; run++) {
         // Generate random invertible matrix with different seed per run
         std::vector<double> matrix(d * d);
-        std::mt19937 gen(42 + run);  // Different seed per trial
+        std::mt19937 gen(1000 + run);  // Different seed per trial
         std::uniform_real_distribution<double> dis(-1.0, 1.0);
         do {
             for (int i = 0; i < d * d; i++) {
@@ -90,8 +95,11 @@ void runInversionBenchmark(int numRuns = 1) {
         error.compute(groundTruth, computed, d);
         if (run == 0) avgError = error;
 
+        // Print final ciphertext level
+        int finalLevel = result[0]->GetLevel();
         std::cout << "  Run " << (run + 1) << ": " << std::fixed << std::setprecision(2)
-                  << duration << "s, log2(err)=" << std::setprecision(1) << error.log2FrobError << std::endl;
+                  << duration << "s, log2(err)=" << std::setprecision(1) << error.log2FrobError
+                  << ", final_level=" << finalLevel << "/" << multDepth << std::endl;
     }
 
     double avgTime = totalTime / numRuns;
@@ -117,7 +125,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Note: Limited to d<=8 due to d^2 ciphertexts" << std::endl;
 
     #ifdef _OPENMP
-    // omp_set_num_threads(1);  // Commented for multi-thread quick test
+    omp_set_num_threads(1);
     std::cout << "OpenMP Threads: " << omp_get_max_threads() << std::endl;
     #else
     std::cout << "OpenMP: Not enabled (single thread)" << std::endl;

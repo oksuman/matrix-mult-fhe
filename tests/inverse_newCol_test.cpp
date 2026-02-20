@@ -32,7 +32,7 @@ template <int d> class MatrixInverseNewColTestFixture : public ::testing::Test {
             scaleModSize = 50;
             break;
         case 8:
-            r = 21;
+            r = 22;
             multDepth = 34;
             scaleModSize = 59;
             firstModSize = 60;
@@ -50,7 +50,7 @@ template <int d> class MatrixInverseNewColTestFixture : public ::testing::Test {
             bsgsDim = {0, 0};
             break;
         case 32:
-            r = 28;
+            r = 27;
             multDepth = 29;
             scaleModSize = 59;
             firstModSize = 60;
@@ -59,7 +59,7 @@ template <int d> class MatrixInverseNewColTestFixture : public ::testing::Test {
             bsgsDim = {0, 0};
             break;
         case 64:
-            r = 31;
+            r = 30;
             multDepth = 29;
             scaleModSize = 59;
             firstModSize = 60;

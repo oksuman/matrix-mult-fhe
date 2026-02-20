@@ -17,10 +17,13 @@ typeset -A times
 typeset -A accuracies
 typeset -A setup_mem
 typeset -A peak_mem
+typeset -A idle_mem
 typeset -A ct_size
 typeset -A ct_count
 typeset -A rot_key_size
 typeset -A relin_key_size
+
+num_trials=""
 
 # Parse the results file
 current_algo=""
@@ -30,6 +33,11 @@ while IFS= read -r line; do
     # Detect algorithm name
     if [[ $line =~ "Matrix Squaring Benchmark - "([A-Za-z0-9]+) ]]; then
         current_algo="${match[1]}"
+    fi
+
+    # Detect trial count
+    if [[ $line =~ "Trials: "([0-9]+) ]]; then
+        num_trials="${match[1]}"
     fi
 
     # Detect dimension
@@ -49,6 +57,10 @@ while IFS= read -r line; do
     fi
 
     # Parse memory metrics
+    if [[ $line =~ "Idle Memory:"[[:space:]]*([0-9.]+)" GB" ]]; then
+        idle_mem[${current_algo}]="${match[1]}"
+    fi
+
     if [[ $line =~ "Setup Memory:"[[:space:]]*([0-9.]+)" GB" ]]; then
         setup_mem[${current_algo}_${current_dim}]="${match[1]}"
     fi
@@ -82,9 +94,10 @@ ALGORITHMS=(Naive NewCol AR24 JKLS18 RT22)
 DIMENSIONS=(4 8 16 32 64)
 
 # Generate Time Table
-cat > "$TIME_TABLE" << 'EOF'
+cat > "$TIME_TABLE" << EOF
 ================================================================================
                     Matrix Squaring Time Comparison (seconds)
+                    Trials: ${num_trials:-N/A}
 ================================================================================
 EOF
 
@@ -139,8 +152,9 @@ for algo in "${ALGORITHMS[@]}"; do
 
             setup="${setup_mem[$key]:-0}"
             peak="${peak_mem[$key]:-0}"
-            setup_oh=$(echo "scale=2; $setup - 0.004" | bc 2>/dev/null || echo "$setup")
-            runtime_oh=$(echo "scale=2; $peak - $setup" | bc 2>/dev/null || echo "0")
+            idle="${idle_mem[$algo]:-0}"
+            setup_oh=$(echo "scale=4; $setup - $idle" | bc 2>/dev/null || echo "$setup")
+            runtime_oh=$(echo "scale=4; $peak - $setup" | bc 2>/dev/null || echo "0")
 
             printf "%12s" "$setup_oh" >> "$MEMORY_TABLE"
             printf "%12s" "$runtime_oh" >> "$MEMORY_TABLE"

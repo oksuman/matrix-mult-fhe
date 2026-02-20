@@ -397,7 +397,7 @@ int main(int argc, char* argv[]) {
     uint32_t firstModSize;
 
     // Unified parameters (bootstrapping always enabled for benchmarks)
-    multDepth = 28;
+    multDepth = 30;
     scalingModSize = 59;
     firstModSize = 60;
 

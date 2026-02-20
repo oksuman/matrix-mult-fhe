@@ -1,4 +1,4 @@
-// lr_encrypted_base.h
+// fh_encrypted_base.h
 // Base class for encrypted logistic regression (Fixed Hessian)
 // Contains: JKLS18 multiplication, transpose, trace, scalar inverse,
 //           rebatch, computeXty, matVecMult, debug utilities
@@ -6,7 +6,7 @@
 
 #include "encryption.h"
 #include "rotation.h"
-#include "lr_data_encoder.h"
+#include "fh_data_encoder.h"
 #include <memory>
 #include <chrono>
 #include <iostream>
@@ -14,7 +14,7 @@
 #include <set>
 #include <cmath>
 
-class LREncryptedBase {
+class FHEncryptedBase {
 protected:
     std::shared_ptr<Encryption> m_enc;
     CryptoContext<DCRTPoly> m_cc;
@@ -233,7 +233,7 @@ protected:
     }
 
 public:
-    LREncryptedBase(std::shared_ptr<Encryption> enc,
+    FHEncryptedBase(std::shared_ptr<Encryption> enc,
                     CryptoContext<DCRTPoly> cc,
                     KeyPair<DCRTPoly> keyPair,
                     std::vector<int> rotIndices,
@@ -249,7 +249,7 @@ public:
         , m_verbose(false)
     {}
 
-    virtual ~LREncryptedBase() = default;
+    virtual ~FHEncryptedBase() = default;
 
     void setVerbose(bool v) { m_verbose = v; }
     void setBootstrapping(bool enable) { m_useBootstrapping = enable; }
@@ -558,35 +558,26 @@ public:
         return diagH;
     }
 
-    // Newton-Raphson iterations for diagonal inverse
-    // x_{n+1} = 2*x_n - a*x_n^2 (converges to 1/a)
-    // u0 is chosen based on expected value range of diag_H
-    // For normalized data [0,1] with N samples, diag_H[j] ≈ -N/16 to -N/4
-    Ciphertext<DCRTPoly> eval_diagonal_inverse_newton_raphson(
+    // Iterative diagonal inverse: x_{n+1} = 2*x_n - a*x_n^2
+    Ciphertext<DCRTPoly> eval_diagonal_inverse(
                             const Ciphertext<DCRTPoly>& diagH,
                             int numSamples, int featureDim, int sampleDim,
-                            int nrIterations = 2) {
-        // Estimate initial value u0
-        // diag_H[j] = -1/4 * Σᵢ(x_ij * Σₖ x_ik)
-        // For normalized [0,1] data: x_ij ∈ [0,1], Σₖ x_ik ∈ [0, d+1]
-        // Average-based estimation: E[diag_H] ≈ -N*(d+1)/16
-        // So u0 ≈ 1/E[diag_H] = -16/(N*(d+1))
-        int actualFeatures = LR_RAW_FEATURES + 1;  // 14
+                            int iterations = 2) {
+        int actualFeatures = FH_RAW_FEATURES + 1;
         double u0 = -16.0 / (numSamples * actualFeatures);
 
         if (m_verbose) {
-            std::cout << "  [Newton-Raphson] u0 = " << u0
+            std::cout << "  [DiagInverse] u0 = " << u0
                       << " (N=" << numSamples << ", f=" << featureDim
-                      << ", iterations=" << nrIterations << ")" << std::endl;
+                      << ", iterations=" << iterations << ")" << std::endl;
         }
 
         // First iteration: x_1 = 2*u0 - diagH * u0^2
-        // diagH is now 16-replicated form (256 slots)
         double twoU0 = 2.0 * u0;
         double u0Sq = u0 * u0;
 
         auto diagH_u0sq = m_cc->EvalMult(diagH, u0Sq);
-        int slots = featureDim * featureDim;  // 256
+        int slots = featureDim * featureDim;
         std::vector<double> twoU0Vec(slots, twoU0);
         auto twoU0Ptx = m_cc->MakeCKKSPackedPlaintext(twoU0Vec, 1, 0, nullptr, slots);
         auto invDiag = m_cc->EvalSub(twoU0Ptx, diagH_u0sq);
@@ -595,7 +586,7 @@ public:
             Plaintext ptxInv;
             m_cc->Decrypt(m_keyPair.secretKey, invDiag, &ptxInv);
             auto invVec = ptxInv->GetRealPackedValue();
-            std::cout << "  [Newton-Raphson iter 1] inv_diag (first 8): ";
+            std::cout << "  [DiagInverse iter 1] inv_diag (first 8): ";
             for (int i = 0; i < std::min(8, featureDim); i++) {
                 std::cout << std::setprecision(6) << invVec[i] << " ";
             }
@@ -603,21 +594,17 @@ public:
         }
 
         // Additional iterations: x_{n+1} = 2*x_n - diagH * x_n^2
-        for (int iter = 1; iter < nrIterations; iter++) {
-            // x_n^2
+        for (int iter = 1; iter < iterations; iter++) {
             auto invDiagSq = m_cc->EvalMultAndRelinearize(invDiag, invDiag);
-            // diagH * x_n^2
             auto diagH_xSq = m_cc->EvalMultAndRelinearize(diagH, invDiagSq);
-            // 2 * x_n
             auto twoX = m_cc->EvalMult(invDiag, 2.0);
-            // x_{n+1} = 2*x_n - diagH * x_n^2
             invDiag = m_cc->EvalSub(twoX, diagH_xSq);
 
             if (m_verbose) {
                 Plaintext ptxInv;
                 m_cc->Decrypt(m_keyPair.secretKey, invDiag, &ptxInv);
                 auto invVec = ptxInv->GetRealPackedValue();
-                std::cout << "  [Newton-Raphson iter " << (iter + 1) << "] inv_diag (first 8): ";
+                std::cout << "  [DiagInverse iter " << (iter + 1) << "] inv_diag (first 8): ";
                 for (int i = 0; i < std::min(8, featureDim); i++) {
                     std::cout << std::setprecision(6) << invVec[i] << " ";
                 }

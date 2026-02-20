@@ -1,19 +1,19 @@
 #pragma once
 
-#include "lr_data_encoder.h"
-#include "lr_he_ops.h"
+#include "fh_data_encoder.h"
+#include "fh_he_ops.h"
 #include <vector>
 #include <cmath>
 #include <iostream>
 #include <iomanip>
 
-struct LRTrainResult {
+struct FHTrainResult {
     std::vector<double> weights;  // length 16 (includes bias at index 13, padding at 14-15)
     int iterations;
     std::string method;  // "simplified" or "fixed"
 };
 
-struct LRPrecomputed {
+struct FHPrecomputed {
     // Per-batch precomputed values
     std::vector<std::vector<double>> Xty;       // [batch] -> length 16 vector
     std::vector<std::vector<double>> XtX;       // [batch] -> 16x16 matrix (256 elements)
@@ -29,61 +29,61 @@ struct LRPrecomputed {
     int N;  // total training samples
 };
 
-class LRHETrainer {
+class FHHETrainer {
 public:
     // ===== HE-friendly precomputation (64x64 format) =====
 
     // X^T y: y->SetSlots(64->4096)->transpose->Hadamard(X,y_t)->rowFoldingSum
     static std::vector<double> computeXty_HE(const std::vector<double>& X_packed,
                                               const std::vector<double>& y_packed) {
-        const int d = LR_MATRIX_DIM;
-        const int f = LR_FEATURES;
+        const int d = FH_MATRIX_DIM;
+        const int f = FH_FEATURES;
 
         // y (64 slots) -> SetSlots(64->4096): replicate y into 64x64 format
-        auto y_replicated = LROps::setSlots(y_packed, LR_SLOTS);
+        auto y_replicated = FHOps::setSlots(y_packed, FH_SLOTS);
 
         // Transpose: position(i,j) = y[i] for all j
-        auto y_transposed = LROps::transpose(y_replicated, d);
+        auto y_transposed = FHOps::transpose(y_replicated, d);
 
         // Hadamard(X, y_transposed): position(i,j) = x_ij * y_i
-        auto xy = LROps::mult(X_packed, y_transposed);
+        auto xy = FHOps::mult(X_packed, y_transposed);
 
         // Row folding sum: position(0,j) = sum_i x_ij * y_i = (X^T y)_j
-        auto folded = LROps::rowFoldingSum(xy, d);
+        auto folded = FHOps::rowFoldingSum(xy, d);
 
         return std::vector<double>(folded.begin(), folded.begin() + f);
     }
 
     // X^T X: transpose(X)->matMult->rebatch(64->16)
     static std::vector<double> computeXtX_HE(const std::vector<double>& X_packed) {
-        const int d = LR_MATRIX_DIM;
-        const int f = LR_FEATURES;
+        const int d = FH_MATRIX_DIM;
+        const int f = FH_FEATURES;
 
-        auto Xt = LROps::transpose(X_packed, d);
-        auto XtX_64 = LROps::matMult(Xt, X_packed, d);
-        return LROps::rebatch(XtX_64, d, f);
+        auto Xt = FHOps::transpose(X_packed, d);
+        auto XtX_64 = FHOps::matMult(Xt, X_packed, d);
+        return FHOps::rebatch(XtX_64, d, f);
     }
 
     // Simplified Hessian diagonal per batch:
     // columnFoldingSum->maskCol0->replicateCol0->Hadamard(X,rep)->rowFoldingSum
     static std::vector<double> computeDiagH_batch_HE(const std::vector<double>& X_packed) {
-        const int d = LR_MATRIX_DIM;
-        const int f = LR_FEATURES;
+        const int d = FH_MATRIX_DIM;
+        const int f = FH_FEATURES;
 
         // 1. Column folding sum (rotate +32,+16,+8,+4,+2,+1)
-        auto colFolded = LROps::columnFoldingSum(X_packed, d);
+        auto colFolded = FHOps::columnFoldingSum(X_packed, d);
 
         // 2. Mask column 0
-        auto masked = LROps::maskColumn0(colFolded, d);
+        auto masked = FHOps::maskColumn0(colFolded, d);
 
         // 3. Replicate column 0 to all columns
-        auto replicated = LROps::replicateColumn0(masked, d);
+        auto replicated = FHOps::replicateColumn0(masked, d);
 
         // 4. Hadamard(X, replicated): position(i,j) = x_ij * sum_k x_ik
-        auto product = LROps::mult(X_packed, replicated);
+        auto product = FHOps::mult(X_packed, replicated);
 
         // 5. Row folding sum: position(0,j) = sum_i x_ij * sum_k x_ik
-        auto folded = LROps::rowFoldingSum(product, d);
+        auto folded = FHOps::rowFoldingSum(product, d);
 
         return std::vector<double>(folded.begin(), folded.begin() + f);
     }
@@ -93,19 +93,19 @@ public:
     // SetSlots(v)->transpose->Hadamard(M,v_t)->rowFoldingSum
     static std::vector<double> matVecMult_HE16(const std::vector<double>& M_16x16,
                                                 const std::vector<double>& v_16) {
-        const int f = LR_FEATURES;
+        const int f = FH_FEATURES;
 
         // 1. v (16 slots) -> SetSlots(16->256): 16x replicate
-        auto v_rep = LROps::setSlots(v_16, f * f);
+        auto v_rep = FHOps::setSlots(v_16, f * f);
 
         // 2. Transpose (16x16)
-        auto v_t = LROps::transpose(v_rep, f);
+        auto v_t = FHOps::transpose(v_rep, f);
 
         // 3. Hadamard(M, v_transposed)
-        auto product = LROps::mult(M_16x16, v_t);
+        auto product = FHOps::mult(M_16x16, v_t);
 
         // 4. Row folding sum
-        auto folded = LROps::rowFoldingSum(product, f);
+        auto folded = FHOps::rowFoldingSum(product, f);
 
         // 5. Extract first 16 elements
         return std::vector<double>(folded.begin(), folded.begin() + f);
@@ -113,13 +113,13 @@ public:
 
     // ===== Main precomputation =====
 
-    static LRPrecomputed precompute(const LRDataset& trainSet, int numBatches,
+    static FHPrecomputed precompute(const FHDataset& trainSet, int numBatches,
                                     bool verbose = false) {
-        LRPrecomputed pre;
+        FHPrecomputed pre;
         pre.numBatches = numBatches;
-        pre.N = numBatches * LR_BATCH_SIZE;
+        pre.N = numBatches * FH_BATCH_SIZE;
 
-        const int f = LR_FEATURES;
+        const int f = FH_FEATURES;
 
         pre.Xty.resize(numBatches);
         pre.XtX.resize(numBatches);
@@ -133,8 +133,8 @@ public:
         std::vector<double> total_XtX(f * f, 0.0);
 
         for (int b = 0; b < numBatches; b++) {
-            auto X_packed = LRDataEncoder::packBatchX(trainSet, b);
-            auto y_packed = LRDataEncoder::packBatchY(trainSet, b);
+            auto X_packed = FHDataEncoder::packBatchX(trainSet, b);
+            auto y_packed = FHDataEncoder::packBatchY(trainSet, b);
 
             pre.Xty[b] = computeXty_HE(X_packed, y_packed);
             pre.XtX[b] = computeXtX_HE(X_packed);
@@ -143,7 +143,7 @@ public:
             for (int j = 0; j < f; j++) {
                 total_diag_h[j] += diag_h_b[j];
             }
-            LROps::addInPlace(total_XtX, pre.XtX[b]);
+            FHOps::addInPlace(total_XtX, pre.XtX[b]);
 
             if (verbose) {
                 std::cout << "  Batch " << b << " done." << std::endl;
@@ -165,12 +165,12 @@ public:
         for (int i = 0; i < f * f; i++) {
             pre.H[i] = -0.25 * total_XtX[i];
         }
-        pre.H_inv = LROps::invertMatrix(pre.H, f, 20);
+        pre.H_inv = FHOps::invertMatrix(pre.H, f, 20);
 
         if (verbose) {
             // Print X^T y
             std::cout << "\nX^T y (first 14): ";
-            for (int j = 0; j < LR_RAW_FEATURES + 1; j++) {
+            for (int j = 0; j < FH_RAW_FEATURES + 1; j++) {
                 std::cout << std::setw(10) << std::setprecision(4) << std::fixed
                           << pre.Xty[0][j] << " ";
             }
@@ -178,7 +178,7 @@ public:
 
             // Print X^T X diagonal
             std::cout << "diag(X^T X) (first 14): ";
-            for (int j = 0; j < LR_RAW_FEATURES + 1; j++) {
+            for (int j = 0; j < FH_RAW_FEATURES + 1; j++) {
                 std::cout << std::setw(10) << std::setprecision(4) << std::fixed
                           << pre.XtX[0][j * f + j] << " ";
             }
@@ -186,7 +186,7 @@ public:
 
             // Print diag_H (before -1/4)
             std::cout << "raw_diag_h (first 14): ";
-            for (int j = 0; j < LR_RAW_FEATURES + 1; j++) {
+            for (int j = 0; j < FH_RAW_FEATURES + 1; j++) {
                 std::cout << std::setw(10) << std::setprecision(4) << std::fixed
                           << total_diag_h[j] << " ";
             }
@@ -194,7 +194,7 @@ public:
 
             // Print diag_H (after -1/4)
             std::cout << "diag(H̃) = -1/4 * raw (first 14): ";
-            for (int j = 0; j < LR_RAW_FEATURES + 1; j++) {
+            for (int j = 0; j < FH_RAW_FEATURES + 1; j++) {
                 std::cout << std::setw(10) << std::setprecision(4) << std::fixed
                           << (-0.25 * total_diag_h[j]) << " ";
             }
@@ -207,8 +207,8 @@ public:
             }
             std::cout << std::endl;
 
-            LROps::printMatrix(pre.H, f, f, "H (16x16)");
-            LROps::printMatrix(pre.H_inv, f, f, "H_inv (16x16)");
+            FHOps::printMatrix(pre.H, f, f, "H (16x16)");
+            FHOps::printMatrix(pre.H_inv, f, f, "H_inv (16x16)");
         }
 
         return pre;
@@ -216,17 +216,17 @@ public:
 
     // ===== Training: per-batch cycling =====
 
-    static LRTrainResult trainSimplified(const LRPrecomputed& pre, int maxIter,
+    static FHTrainResult trainSimplified(const FHPrecomputed& pre, int maxIter,
                                          bool verbose = false) {
-        LRTrainResult result;
+        FHTrainResult result;
         result.method = "simplified";
         result.iterations = maxIter;
 
-        const int f = LR_FEATURES;
+        const int f = FH_FEATURES;
 
         // Initialize weights (small values for active features, 0 for padding)
         std::vector<double> w(f, 0.0);
-        for (int j = 0; j <= LR_RAW_FEATURES; j++) {  // 0..13 (features + bias)
+        for (int j = 0; j <= FH_RAW_FEATURES; j++) {  // 0..13 (features + bias)
             w[j] = 0.001;
         }
 
@@ -268,7 +268,7 @@ public:
 
             if (verbose && ((iter + 1) % 32 == 0 || iter == 0)) {
                 std::cout << "  iter " << (iter + 1) << ": w[0]=" << w[0]
-                          << " bias=" << w[LR_RAW_FEATURES] << std::endl;
+                          << " bias=" << w[FH_RAW_FEATURES] << std::endl;
             }
         }
 
@@ -276,16 +276,16 @@ public:
         return result;
     }
 
-    static LRTrainResult trainFixed(const LRPrecomputed& pre, int maxIter,
+    static FHTrainResult trainFixed(const FHPrecomputed& pre, int maxIter,
                                     bool verbose = false) {
-        LRTrainResult result;
+        FHTrainResult result;
         result.method = "fixed";
         result.iterations = maxIter;
 
-        const int f = LR_FEATURES;
+        const int f = FH_FEATURES;
 
         std::vector<double> w(f, 0.0);
-        for (int j = 0; j <= LR_RAW_FEATURES; j++) {
+        for (int j = 0; j <= FH_RAW_FEATURES; j++) {
             w[j] = 0.001;
         }
 
@@ -316,7 +316,7 @@ public:
 
             if (verbose && ((iter + 1) % 4 == 0 || iter == 0)) {
                 std::cout << "  iter " << (iter + 1) << ": w[0]=" << w[0]
-                          << " bias=" << w[LR_RAW_FEATURES] << std::endl;
+                          << " bias=" << w[FH_RAW_FEATURES] << std::endl;
             }
         }
 
@@ -335,8 +335,8 @@ public:
         double f1;
     };
 
-    static InferenceResult inference(const LRTrainResult& model,
-                                     const LRDataset& testSet,
+    static InferenceResult inference(const FHTrainResult& model,
+                                     const FHDataset& testSet,
                                      bool verbose = false) {
         InferenceResult res;
         res.total = testSet.numSamples;
@@ -347,7 +347,7 @@ public:
         for (size_t i = 0; i < testSet.numSamples; i++) {
             // z = x * w (dot product, x includes bias column and padding)
             double z = 0.0;
-            for (int j = 0; j < LR_FEATURES; j++) {
+            for (int j = 0; j < FH_FEATURES; j++) {
                 z += testSet.samples[i][j] * model.weights[j];
             }
 

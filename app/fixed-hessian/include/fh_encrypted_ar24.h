@@ -1,26 +1,24 @@
-// lr_encrypted_ar24.h
+// fh_encrypted_ar24.h
 // AR24 matrix multiplication and iterative inversion for 16x16 matrices
 #pragma once
 
-#include "lr_encrypted_base.h"
+#include "fh_encrypted_base.h"
 
-class LR_AR24 : public LREncryptedBase {
+class FH_AR24 : public FHEncryptedBase {
 private:
     // AR24-specific mask generation
-    std::vector<double> generatePhiMsk(int k, int d, int s) {
-        std::vector<double> msk(d * d * s, 0);
-        for (int i = k; i < d * d * s; i += d) {
+    std::vector<double> generatePhiMsk(int k, int d) {
+        std::vector<double> msk(d * d, 0);
+        for (int i = k; i < d * d; i += d) {
             msk[i] = 1;
         }
         return msk;
     }
 
-    std::vector<double> generatePsiMsk(int k, int d, int s) {
-        std::vector<double> msk(d * d * s, 0);
-        for (int i = 0; i < s; i++) {
-            for (int j = i * d * d + k * d; j < i * d * d + k * d + d; j++) {
-                msk[j] = 1;
-            }
+    std::vector<double> generatePsiMsk(int k, int d) {
+        std::vector<double> msk(d * d, 0);
+        for (int j = k; j < k + d; j++) {
+            msk[j] = 1;
         }
         return msk;
     }
@@ -55,7 +53,7 @@ private:
 
         // Build Tilde_A
         for (int i = 0; i < B; i++) {
-            auto phi_si = m_cc->MakeCKKSPackedPlaintext(generatePhiMsk(s * i, d, s), 1, 0, nullptr, num_slots);
+            auto phi_si = m_cc->MakeCKKSPackedPlaintext(generatePhiMsk(s * i, d), 1, 0, nullptr, d * d);
             auto tmp = m_cc->EvalMult(matrixA_copy, phi_si);
             tmp = rot.rotate(tmp, s * i);
             for (int j = 0; j < (int)log2(d); j++) {
@@ -66,7 +64,7 @@ private:
 
         // Build Tilde_B
         for (int i = 0; i < B; i++) {
-            auto psi_si = m_cc->MakeCKKSPackedPlaintext(generatePsiMsk(s * i, d, s), 1, 0, nullptr, num_slots);
+            auto psi_si = m_cc->MakeCKKSPackedPlaintext(generatePsiMsk(s * i, d), 1, 0, nullptr, d * d);
             auto tmp = m_cc->EvalMult(matrixB_copy, psi_si);
             tmp = rot.rotate(tmp, s * i * d);
             for (int j = 0; j < (int)log2(d); j++) {
@@ -101,13 +99,13 @@ private:
     }
 
 public:
-    LR_AR24(std::shared_ptr<Encryption> enc,
+    FH_AR24(std::shared_ptr<Encryption> enc,
             CryptoContext<DCRTPoly> cc,
             KeyPair<DCRTPoly> keyPair,
             std::vector<int> rotIndices,
             int multDepth,
             bool useBootstrapping = true)
-        : LREncryptedBase(enc, cc, keyPair, rotIndices, multDepth, useBootstrapping)
+        : FHEncryptedBase(enc, cc, keyPair, rotIndices, multDepth, useBootstrapping)
     {}
 
     // Matrix inversion using AR24 multiplication
@@ -177,9 +175,9 @@ public:
                               << Y->GetLevel() << "/" << m_multDepth << ")" << std::endl;
                 }
                 A_bar->SetSlots(d * d);
-                A_bar = m_cc->EvalBootstrap(A_bar, 2);
+                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
                 Y->SetSlots(d * d);
-                Y = m_cc->EvalBootstrap(Y, 2);
+                Y = m_cc->EvalBootstrap(Y, 2, 18);
 
                 A_bar->SetSlots(d * d * s);
                 A_bar = clean(A_bar, d, s);
@@ -204,9 +202,9 @@ public:
                 std::cout << "  [Before Final] Bootstrapping (pre-level: " << Y->GetLevel() << "/" << m_multDepth << ")" << std::endl;
             }
             A_bar->SetSlots(d * d);
-            A_bar = m_cc->EvalBootstrap(A_bar, 2);
+            A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
             Y->SetSlots(d * d);
-            Y = m_cc->EvalBootstrap(Y, 2);
+            Y = m_cc->EvalBootstrap(Y, 2, 18);
             A_bar->SetSlots(d * d * s);
             Y->SetSlots(d * d * s);
         }

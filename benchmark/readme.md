@@ -12,7 +12,7 @@ cmake ..
 make -j$(nproc)
 ```
 
-## 1. Deep Multiplication (`deep_multiplication/`)
+## 1. Matrix Squaring (`squaring/`)
 
 Repeated squaring: A → A² → A⁴ → ... → A^(2^15)
 
@@ -20,17 +20,16 @@ Repeated squaring: A → A² → A⁴ → ... → A^(2^15)
 
 | Algorithm | Ciphertexts | Mult Depth | Description |
 |-----------|-------------|------------|-------------|
+| Naive     | d*d         | 2 per iter | Element-wise baseline |
 | NewCol    | 1           | 2 per iter | Column-based packing |
 | AR24      | 1           | 3 per iter | INDOCRYPT 2024 |
 | JKLS18    | 1           | 3 per iter | CCS 2018 |
-| RT22      | 1           | 2 per iter | CCSW 2022 |
-| NewRow    | 1           | 2 per iter | Row-based packing |
-| Diagonal  | d           | 1 per iter | d ciphertexts for d diagonals |
+| RT22      | 1           | 2 per iter | CCSW 2022 (d ≤ 32) |
 
 ### Run
 
 ```bash
-cd build/benchmark/deep_multiplication
+cd build/benchmark/squaring
 
 # Run all algorithms (with 45s cooling between each)
 ./run_squaring_benchmarks.sh        # 1 trial per dimension
@@ -41,25 +40,30 @@ cd build/benchmark/deep_multiplication
 ./benchmark_squaring_ar24 [num_runs]
 ./benchmark_squaring_jkls18 [num_runs]
 ./benchmark_squaring_rt22 [num_runs]
-./benchmark_squaring_newrow [num_runs]
-./benchmark_squaring_diag [num_runs]
+./benchmark_squaring_naive [num_runs]
 ```
 
 Results saved to `squaring_benchmark_results.txt`.
 
 ## 2. Matrix Inversion (`inversion/`)
 
-Newton-Schulz iteration: Y_{k+1} = Y_k(2I - AY_k)
+Iterative inversion: Y = Y*(I + A_bar), A_bar = A_bar^2
+
+### Algorithms
+
+- Naive: d = {4, 8} only (d^2 ciphertexts, no bootstrapping)
+- NewCol, AR24, JKLS18: d = {4, 8, 16, 32, 64}
+- RT22: d = {4, 8, 16, 32} only (cubic batch size prevents d=64)
 
 ### Iterations by Dimension
 
 | Dimension | Iterations (r) |
 |-----------|----------------|
 | 4×4       | 18             |
-| 8×8       | 21             |
+| 8×8       | 22             |
 | 16×16     | 25             |
-| 32×32     | 28             |
-| 64×64     | 31             |
+| 32×32     | 27             |
+| 64×64     | 30             |
 
 ### Run
 
@@ -75,9 +79,19 @@ cd build/benchmark/inversion
 ./benchmark_inversion_ar24 [num_runs]
 ./benchmark_inversion_jkls18 [num_runs]
 ./benchmark_inversion_rt22 [num_runs]
-./benchmark_inversion_newrow [num_runs]
-./benchmark_inversion_diag [num_runs]
 ./benchmark_inversion_naive [num_runs]  # d≤8 only
+```
+
+## 3. Applications (`app/`)
+
+Three ML applications comparing encrypted matrix operations.
+
+```bash
+# Run from source directory:
+cd benchmark/app
+./run_lr.sh    # Linear Regression (Naive/NewCol/AR24)
+./run_lda.sh   # LDA (NewCol/AR24)
+./run_fh.sh    # Fixed Hessian (FH: NewCol/AR24, SFH: diagonal)
 ```
 
 ## Output Format
@@ -111,9 +125,10 @@ Time: 30.29s
 ## Fairness Guarantees
 
 - **Single-thread**: `OMP_NUM_THREADS=1`
-- **Cooling period**: 45 seconds between algorithms
+- **Cooling period**: 45-60 seconds between algorithms
 - **Time measurement**: Computation only (excludes encryption/decryption/output)
 - **Ground truth**: Plaintext computation for accuracy comparison
+- **Seed**: `1000 + run` for reproducible random matrices
 
 ## Configuration
 
@@ -122,23 +137,31 @@ Common parameters in `benchmark_config.h`:
 | Parameter | Value |
 |-----------|-------|
 | Security Level | HEStd_128_classic |
-| Scaling Mod Size | 50 (deep mult), 59 (inversion) |
+| Scaling Mod Size | 50 (squaring), 59 (inversion) |
 | Squaring Iterations | 15 |
+| Inversion Mult Depth | 36 |
+| Scalar Inverse Iterations | 1 |
 
 ## File Structure
 
 ```
 benchmark/
-├── README.md
+├── readme.md
 ├── benchmark_config.h      # Common configuration & ErrorMetrics
 ├── memory_tracker.h/cpp    # Memory monitoring utilities
+├── run_all_benchmarks.sh   # Master benchmark runner
 │
-├── deep_multiplication/
+├── squaring/
 │   ├── benchmark_squaring.h
 │   ├── benchmark_squaring_*.cpp
 │   └── run_squaring_benchmarks.sh
 │
-└── inversion/
-    ├── benchmark_inversion_*.cpp
-    └── run_inversion_benchmarks.sh
+├── inversion/
+│   ├── benchmark_inversion_*.cpp
+│   └── run_inversion_benchmarks.sh
+│
+└── app/
+    ├── run_lr.sh
+    ├── run_lda.sh
+    └── run_fh.sh
 ```

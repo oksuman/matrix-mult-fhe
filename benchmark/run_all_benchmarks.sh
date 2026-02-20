@@ -4,7 +4,7 @@
 # Matrix-Mult-FHE: Unified Benchmark Runner
 # =============================================================
 # This script runs all benchmarks sequentially:
-# 1. Deep Matrix Multiplication
+# 1. Matrix Squaring
 # 2. Matrix Inversion
 # 3. Linear Regression
 # 4. LDA
@@ -92,25 +92,25 @@ main() {
     local start_time=$(date +%s)
 
     # Check which benchmarks to run (default: all)
-    local run_deep_mult=true
+    local run_squaring=true
     local run_inversion=true
     local run_apps=true
 
     # Parse command line arguments
     while [[ $# -gt 0 ]]; do
         case $1 in
-            --deep-mult-only)
+            --squaring-only)
                 run_inversion=false
                 run_apps=false
                 shift
                 ;;
             --inversion-only)
-                run_deep_mult=false
+                run_squaring=false
                 run_apps=false
                 shift
                 ;;
             --apps-only)
-                run_deep_mult=false
+                run_squaring=false
                 run_inversion=false
                 shift
                 ;;
@@ -118,7 +118,7 @@ main() {
                 echo "Usage: $0 [OPTIONS]"
                 echo ""
                 echo "Options:"
-                echo "  --deep-mult-only   Run only deep multiplication benchmarks"
+                echo "  --squaring-only    Run only matrix squaring benchmarks"
                 echo "  --inversion-only   Run only inversion benchmarks"
                 echo "  --apps-only        Run only application benchmarks"
                 echo "  --help             Show this help message"
@@ -131,14 +131,14 @@ main() {
         esac
     done
 
-    # 1. Deep Matrix Multiplication
-    if $run_deep_mult; then
-        if [ -d "$BUILD_DIR/deep_multiplication" ]; then
-            run_benchmark "Deep Matrix Multiplication" \
-                "$BUILD_DIR/deep_multiplication/run_deep_mult.sh" \
-                "$RESULTS_DIR/deep_mult_results_$TIMESTAMP.txt"
+    # 1. Matrix Squaring
+    if $run_squaring; then
+        if [ -d "$BUILD_DIR/squaring" ]; then
+            run_benchmark "Matrix Squaring" \
+                "$BUILD_DIR/squaring/run_squaring_benchmarks.sh" \
+                "$RESULTS_DIR/squaring_results_$TIMESTAMP.txt"
         else
-            echo -e "${RED}Deep multiplication directory not found${NC}"
+            echo -e "${RED}Squaring directory not found${NC}"
         fi
     fi
 
@@ -146,16 +146,16 @@ main() {
     if $run_inversion; then
         if [ -d "$BUILD_DIR/inversion" ]; then
             run_benchmark "Matrix Inversion" \
-                "$BUILD_DIR/inversion/run_inversion.sh" \
+                "$BUILD_DIR/inversion/run_inversion_benchmarks.sh" \
                 "$RESULTS_DIR/inversion_results_$TIMESTAMP.txt"
         else
             echo -e "${RED}Inversion directory not found${NC}"
         fi
     fi
 
-    # 3. Applications (use benchmark/applications scripts)
+    # 3. Applications (use benchmark/app scripts)
     if $run_apps; then
-        local APP_SCRIPT_DIR="$SCRIPT_DIR/applications"
+        local APP_SCRIPT_DIR="$SCRIPT_DIR/app"
         if [ -d "$APP_SCRIPT_DIR" ]; then
             # Linear Regression
             run_benchmark "Linear Regression" \

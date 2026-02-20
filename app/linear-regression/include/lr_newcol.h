@@ -189,7 +189,7 @@ private:
         auto trace = this->eval_trace(M, d, d*d);
         // upperBound = SAMPLE_DIM * FEATURE_DIM = 64 * 8 = 512
         double traceUpperBound = static_cast<double>(SAMPLE_DIM) * FEATURE_DIM;
-        auto trace_reciprocal = this->eval_scalar_inverse(trace, traceUpperBound, SCALAR_INV_ITERATIONS, d*d);
+        auto trace_reciprocal = this->eval_scalar_inverse(trace, traceUpperBound, 1, d*d);
 
 
         auto Y = this->m_cc->EvalMult(pI, trace_reciprocal);
@@ -200,13 +200,13 @@ private:
             Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar), s, B, ng, nb, np, d);
             A_bar = this->eval_mult(A_bar, A_bar, s, B, ng, nb, np, d);
             if ((int)Y->GetLevel() >= this->m_multDepth - 2) {
-                A_bar = m_cc->EvalBootstrap(A_bar, 2);
-                Y = m_cc->EvalBootstrap(Y, 2);
+                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+                Y = m_cc->EvalBootstrap(Y, 2, 18);
             }
         }
         Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar), s, B, ng, nb, np, d);
         if ((int)Y->GetLevel() >= this->m_multDepth - 2) {
-                Y = m_cc->EvalBootstrap(Y, 2);
+                Y = m_cc->EvalBootstrap(Y, 2, 18);
         }
         return Y;
     }
@@ -276,7 +276,7 @@ public:
         int nb2 = 4;
         int np2 = 2;
         auto step2_start = high_resolution_clock::now();
-        auto inv_XtX = eval_inverse(rebatched_XtX, s2, B2, ng2, nb2, np2, FEATURE_DIM, getInversionIterations(FEATURE_DIM));
+        auto inv_XtX = eval_inverse(rebatched_XtX, s2, B2, ng2, nb2, np2, FEATURE_DIM, 18);
         auto step2_end = high_resolution_clock::now();
 
         if (m_verbose) {

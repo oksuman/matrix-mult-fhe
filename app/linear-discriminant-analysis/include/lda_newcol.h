@@ -269,8 +269,8 @@ public:
                     std::cout << "  [Iter " << i << "] Bootstrapping triggered. Y level: "
                               << Y->GetLevel() << std::endl;
                 }
-                A_bar = m_cc->EvalBootstrap(A_bar, 2);
-                Y = m_cc->EvalBootstrap(Y, 2);
+                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+                Y = m_cc->EvalBootstrap(Y, 2, 18);
                 if (m_verbose) {
                     std::cout << "           After bootstrap. Y level: " << Y->GetLevel()
                               << ", A_bar level: " << A_bar->GetLevel() << std::endl;
@@ -291,8 +291,8 @@ public:
             if (m_verbose) {
                 std::cout << "  [Before Final] Bootstrapping. Y level: " << Y->GetLevel() << std::endl;
             }
-            A_bar = m_cc->EvalBootstrap(A_bar, 2);
-            Y = m_cc->EvalBootstrap(Y, 2);
+            A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+            Y = m_cc->EvalBootstrap(Y, 2, 18);
             if (m_verbose) {
                 std::cout << "           After bootstrap. Y level: " << Y->GetLevel() << std::endl;
             }
@@ -304,7 +304,7 @@ public:
             if (m_verbose) {
                 std::cout << "  [Final] Bootstrapping. Y level before: " << Y->GetLevel() << std::endl;
             }
-            Y = m_cc->EvalBootstrap(Y, 2);
+            Y = m_cc->EvalBootstrap(Y, 2, 18);
             if (m_verbose) {
                 std::cout << "  [Final] Y level after: " << Y->GetLevel() << std::endl;
             }

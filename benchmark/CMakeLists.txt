@@ -1,3 +1,2 @@
-add_subdirectory(single_multiplication)
-add_subdirectory(deep_multiplication)
+add_subdirectory(squaring)
 add_subdirectory(inversion)

@@ -22,7 +22,7 @@ const int HD_PADDED_SAMPLE = 256;   // Padded to power of 2
 const int HD_MATRIX_DIM = 256;      // max(s̃, f̃) for JKLS18 matrix mult
 
 // Unified iteration counts
-const int LDA_SCALAR_INV_ITERATIONS = 2;
+const int LDA_SCALAR_INV_ITERATIONS = 1;
 
 // Matrix inversion iterations by dimension (95th percentile)
 inline int getLDAInversionIterations(int d) {
@@ -31,7 +31,7 @@ inline int getLDAInversionIterations(int d) {
         case 8:  return 22;
         case 16: return 25;
         case 32: return 27;
-        case 64: return 31;
+        case 64: return 30;
         default: return 25;
     }
 }

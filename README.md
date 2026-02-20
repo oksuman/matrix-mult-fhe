@@ -1,129 +1,79 @@
 # matrix-mult-fhe
 
-Secure matrix multiplication algorithms using the CKKS scheme.
-
-## Overview
-
-This project implements various secure matrix multiplication algorithms using the CKKS (Cheon-Kim-Kim-Song) homomorphic encryption scheme through OpenFHE library. It includes benchmarking tools, tests, and a linear regression application example.
+Secure matrix multiplication and inversion algorithms using the CKKS homomorphic encryption scheme via OpenFHE.
+The project includes matrix inversion via iterative refinement, three ML application experiments (Linear Regression, LDA, Fixed Hessian), and comprehensive benchmarking suites.
 
 ## Requirements
 
-### Prerequisites
 - C++ Compiler (gcc/g++ >= 9.4.0)
 - CMake (>= 3.5.1)
-- Make
-- Git
-- OpenFHE Library
-
-### Installing OpenFHE
-The OpenFHE library must be installed on your system. You can find:
-- Source code: [OpenFHE GitHub Repository](https://github.com/openfheorg/openfhe-development)
-- Installation guide: [OpenFHE Documentation](https://openfhe-development.readthedocs.io)
+- OpenFHE Library ([GitHub](https://github.com/openfheorg/openfhe-development) | [Docs](https://openfhe-development.readthedocs.io))
 
 ## Installation
 
-1. Clone the repository with submodules:
 ```bash
 git clone --recursive https://github.com/oksuman/matrix-mult-fhe.git
 cd matrix-mult-fhe
-```
 
-If you already cloned the repository without `--recursive`, run:
-```bash
-git submodule init
-git submodule update
-```
+# If cloned without --recursive:
+git submodule init && git submodule update
 
-2. Create and enter build directory:
-```bash
-mkdir build
-cd build
-```
-
-3. Configure and build the project:
-```bash
-cmake ..
-make
+# Build
+mkdir -p build && cd build && cmake .. && make -j$(nproc)
 ```
 
 ## Project Structure
 
 ```
 matrix-mult-fhe/
-├── CMakeLists.txt                    # Main CMake configuration file
+├── src/                             # Core library
+│   ├── encryption.{h,cpp}           # CKKS encryption wrapper
+│   ├── matrix_algo_singlePack.h     # JKLS18, RT22, AR24, NewCol, NewRow
+│   ├── matrix_inversion_algo.h      # Iterative matrix inversion
+│   ├── matrix_algo_multiPack.h      # Diagonal-packed multiplication
+│   ├── naive_inversion.h            # Element-wise baseline
+│   └── rotation.h                   # Power-of-2 rotation key management
+├── tests/              
+├── benchmark/
+│   ├── squaring/                    # Deep (iterated) squaring benchmarks
+│   ├── inversion/                   # Matrix inversion benchmarks
+│   ├── app/                         # ML application benchmark scripts
+│   ├── benchmark_config.h           # Unified benchmark parameters
+│   └── run_all_benchmarks.sh        # Master benchmark runner
 ├── app/
-│   └── linear_regression/            # Linear regression application example
-├── benchmark/                        # Benchmarking tools
-│   ├── deep_multiplication/
-│   ├── inversion/
-│   └── single_multiplication/
-├── external/                         # External dependencies
-│   ├── benchmark/                    # Google Benchmark library
-│   └── googletest/                   # Google Test framework
-├── src/                             # Core library source files
-│   ├── encryption.cpp
-│   ├── encryption.h
-│   ├── mat_inv.h
-│   └── matrix_algo_*.h
-├── tests/                           # Test files
-│   ├── inverse_*_test.cpp
-│   └── mult_*_test.cpp
-└── utils/                           # Utility headers
-    ├── csv_processor.h
-    ├── diagonal_packing.h
-    └── matrix_utils.h
+│   ├── linear-regression/           # Encrypted linear regression 
+│   ├── linear-discriminant-analysis/ # Encrypted LDA 
+│   ├── fixed-hessian/               # Encrypted fixed Hessian for logisitic regresion
+│   └── common/                      # Shared evaluation metrics
+├── utils/                           # Matrix utilities, CSV processing
+└── external/                        # Google Test & Benchmark submodules
 ```
 
 ## Running Tests
 
-To build and run all tests:
 ```bash
 cd build
-make
-ctest
-```
-
-To run specific test categories:
-```bash
-# Run multiplication tests
-./tests/mult_*_test
-
-# Run inversion tests
-./tests/inverse_*_test
+ctest                              # Run all tests
+./tests/mult_ar24_test             # Run a specific test
 ```
 
 ## Running Benchmarks
 
-The project includes several benchmark suites:
 ```bash
-# Single multiplication benchmarks
-cd build/benchmark/single_multiplication
-./run_benchmarks.sh
+# Deep multiplication & inversion (scripts are copied to build dir by CMake):
+cd build/benchmark/squaring && ./run_squaring_benchmarks.sh [num_runs]
+cd build/benchmark/inversion && ./run_inversion_benchmarks.sh [num_runs]
 
-# Deep multiplication benchmarks
-cd build/benchmark/deep_multiplication
-./run_squaring_benchmarks.sh
+# Application benchmarks (run from source dir, executables are found via relative paths):
+cd benchmark/app && ./run_lr.sh && ./run_lda.sh && ./run_fh.sh
 
-# Matrix inversion benchmarks
-cd build/benchmark/inversion
-./run_inversion_benchmarks.sh
+# Or run everything at once (from source dir):
+cd benchmark && ./run_all_benchmarks.sh
 ```
 
-## Linear Regression Example
+See `benchmark/*/README.md` for details on each experiment.
 
-The project includes a linear regression application example that demonstrates the use of secure matrix operations:
-```bash
-cd build/app/linear_regression
-./linear_regression
-```
 ## References
-This project implements matrix multiplication algorithms from the following papers:
-
-### JKLS18
-Xiaoqian Jiang, Miran Kim, Kristin E. Lauter, and Yongsoo Song. "Secure Outsourced Matrix Computation and Application to Neural Networks." In *Proceedings of the 2018 ACM SIGSAC Conference on Computer and Communications Security (CCS 2018)*, pages 1209-1222, 2018. [https://eprint.iacr.org/2018/1041.pdf]
-
-### RT22
-Panagiotis Rizomiliotis and Aikaterini Triakosia. "On Matrix Multiplication with Homomorphic Encryption." In *Proceedings of the 2022 on Cloud Computing Security Workshop (CCSW 2022)*, pages 53-61, 2022. [https://dl.acm.org/doi/10.1145/3560810.3564267]
-
-### AR24
-Aikata Aikata and Sujoy Sinha Roy. "Secure and Efficient Outsourced Matrix Multiplication with Homomorphic Encryption." Progress in Cryptology - INDOCRYPT 2024- 25th International Conference Part I, 2024. [https://eprint.iacr.org/2024/1730.pdf]
+- **JKLS18**: X. Jiang, M. Kim, K. Lauter, Y. Song. "Secure Outsourced Matrix Computation and Application to Neural Networks." CCS 2018. [ePrint](https://eprint.iacr.org/2018/1041.pdf)
+- **RT22**: P. Rizomiliotis, A. Triakosia. "On Matrix Multiplication with Homomorphic Encryption." CCSW 2022. [ACM](https://dl.acm.org/doi/10.1145/3560810.3564267)
+- **AR24**: A. Aikata, S.S. Roy. "Secure and Efficient Outsourced Matrix Multiplication with Homomorphic Encryption." INDOCRYPT 2024. [ePrint](https://eprint.iacr.org/2024/1730.pdf)

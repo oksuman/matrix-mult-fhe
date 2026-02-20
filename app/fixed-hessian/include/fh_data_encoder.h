@@ -9,7 +9,7 @@
 #include <iostream>
 #include <iomanip>
 
-struct LRDataset {
+struct FHDataset {
     std::vector<std::vector<double>> samples;  // [sample_idx][feature_idx]
     std::vector<int> labels;                    // {-1, +1}
 
@@ -23,19 +23,19 @@ struct LRDataset {
 
 // Constants for HE packing - dataset dependent
 #ifdef DATASET_DIABETES
-    static const int LR_RAW_FEATURES = 8;         // original features (diabetes: 8)
-    static const int LR_BATCH_SIZE = 64;          // samples per batch: 64
+    static const int FH_RAW_FEATURES = 8;         // original features (diabetes: 8)
+    static const int FH_BATCH_SIZE = 64;          // samples per batch: 64
 #else  // DATASET_HEART (default)
-    static const int LR_RAW_FEATURES = 13;        // original features (heart disease: 13)
-    static const int LR_BATCH_SIZE = 128;         // samples per batch: 128
+    static const int FH_RAW_FEATURES = 13;        // original features (heart disease: 13)
+    static const int FH_BATCH_SIZE = 128;         // samples per batch: 128
 #endif
 
-static const int LR_FEATURES = 16;                // raw + 1 bias + padding to 16
-static const int LR_MATRIX_DIM = LR_BATCH_SIZE;   // d: matrix dimension
-static const int LR_SLOTS = LR_MATRIX_DIM * LR_MATRIX_DIM;  // d*d
+static const int FH_FEATURES = 16;                // raw + 1 bias + padding to 16
+static const int FH_MATRIX_DIM = FH_BATCH_SIZE;   // d: matrix dimension
+static const int FH_SLOTS = FH_MATRIX_DIM * FH_MATRIX_DIM;  // d*d
 
 // Unified iteration counts
-static const int FH_SCALAR_INV_ITERATIONS = 2;
+static const int FH_SCALAR_INV_ITERATIONS = 1;
 
 // Matrix inversion iterations by dimension (95th percentile)
 inline int getFHInversionIterations(int d) {
@@ -44,16 +44,16 @@ inline int getFHInversionIterations(int d) {
         case 8:  return 22;
         case 16: return 25;
         case 32: return 27;
-        case 64: return 31;
+        case 64: return 30;
         default: return 25;
     }
 }
 
-class LRDataEncoder {
+class FHDataEncoder {
 public:
     // Load CSV (header: age,sex,...,thal,target)
-    static LRDataset loadCSV(const std::string& filename) {
-        LRDataset dataset;
+    static FHDataset loadCSV(const std::string& filename) {
+        FHDataset dataset;
 
         std::ifstream file(filename);
         if (!file.is_open()) {
@@ -100,7 +100,7 @@ public:
     }
 
     // Min-max normalization to [0,1] (compute min/max from this dataset, 13 raw features only)
-    static void normalizeFeatures(LRDataset& dataset) {
+    static void normalizeFeatures(FHDataset& dataset) {
         size_t f = dataset.numFeatures;
         size_t n = dataset.numSamples;
 
@@ -131,7 +131,7 @@ public:
     }
 
     // Normalize test set using train set's min/max parameters
-    static void normalizeWithParams(LRDataset& testSet, const LRDataset& trainSet) {
+    static void normalizeWithParams(FHDataset& testSet, const FHDataset& trainSet) {
         size_t f = testSet.numFeatures;
         size_t n = testSet.numSamples;
 
@@ -156,20 +156,20 @@ public:
     }
 
     // Add bias column (constant 1.0) and pad to 16 features
-    static void addBiasAndPad(LRDataset& dataset) {
+    static void addBiasAndPad(FHDataset& dataset) {
         for (size_t i = 0; i < dataset.numSamples; i++) {
             // Add bias
             dataset.samples[i].push_back(1.0);
             // Pad remaining to reach 16 features
-            while (dataset.samples[i].size() < LR_FEATURES) {
+            while (dataset.samples[i].size() < FH_FEATURES) {
                 dataset.samples[i].push_back(0.0);
             }
         }
-        dataset.numFeatures = LR_FEATURES;  // 16
+        dataset.numFeatures = FH_FEATURES;  // 16
     }
 
     // Limit to maxSamples (truncate)
-    static void limitSamples(LRDataset& dataset, size_t maxSamples) {
+    static void limitSamples(FHDataset& dataset, size_t maxSamples) {
         if (dataset.numSamples <= maxSamples) return;
         dataset.samples.resize(maxSamples);
         dataset.labels.resize(maxSamples);
@@ -178,27 +178,27 @@ public:
 
     // Pack batch b of X into 64x64 = 4096-element vector
     // Each row: 16 features + 48 zeros
-    static std::vector<double> packBatchX(const LRDataset& dataset, int batchIdx) {
-        std::vector<double> packed(LR_SLOTS, 0.0);
-        int startSample = batchIdx * LR_BATCH_SIZE;
+    static std::vector<double> packBatchX(const FHDataset& dataset, int batchIdx) {
+        std::vector<double> packed(FH_SLOTS, 0.0);
+        int startSample = batchIdx * FH_BATCH_SIZE;
 
-        for (int i = 0; i < LR_BATCH_SIZE; i++) {
+        for (int i = 0; i < FH_BATCH_SIZE; i++) {
             int sampleIdx = startSample + i;
             if (sampleIdx >= (int)dataset.numSamples) break;
 
-            for (int j = 0; j < LR_FEATURES; j++) {
-                packed[i * LR_MATRIX_DIM + j] = dataset.samples[sampleIdx][j];
+            for (int j = 0; j < FH_FEATURES; j++) {
+                packed[i * FH_MATRIX_DIM + j] = dataset.samples[sampleIdx][j];
             }
         }
         return packed;
     }
 
     // Pack batch b of y into 64-element vector
-    static std::vector<double> packBatchY(const LRDataset& dataset, int batchIdx) {
-        std::vector<double> packed(LR_BATCH_SIZE, 0.0);
-        int startSample = batchIdx * LR_BATCH_SIZE;
+    static std::vector<double> packBatchY(const FHDataset& dataset, int batchIdx) {
+        std::vector<double> packed(FH_BATCH_SIZE, 0.0);
+        int startSample = batchIdx * FH_BATCH_SIZE;
 
-        for (int i = 0; i < LR_BATCH_SIZE; i++) {
+        for (int i = 0; i < FH_BATCH_SIZE; i++) {
             int sampleIdx = startSample + i;
             if (sampleIdx >= (int)dataset.numSamples) break;
             packed[i] = dataset.labels[sampleIdx];
@@ -206,11 +206,11 @@ public:
         return packed;
     }
 
-    static int getNumBatches(const LRDataset& dataset) {
-        return (int)dataset.numSamples / LR_BATCH_SIZE;
+    static int getNumBatches(const FHDataset& dataset) {
+        return (int)dataset.numSamples / FH_BATCH_SIZE;
     }
 
-    static void printDatasetInfo(const LRDataset& dataset, const std::string& name) {
+    static void printDatasetInfo(const FHDataset& dataset, const std::string& name) {
         std::cout << "=== " << name << " ===" << std::endl;
         std::cout << "Samples: " << dataset.numSamples << std::endl;
         std::cout << "Features: " << dataset.numFeatures << std::endl;

@@ -56,7 +56,9 @@ cat > squaring_benchmark_results.txt << EOL
 ============================================
 Date: $(date)
 Trials: $NUM_RUNS
-Single-thread mode
+OMP_NUM_THREADS: $OMP_NUM_THREADS
+Parameters: SCALE_MOD_SIZE=50, FIRST_MOD_SIZE=60
+Squaring iterations: 15
 
 EOL
 

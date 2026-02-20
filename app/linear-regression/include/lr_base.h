@@ -13,7 +13,7 @@ const int FEATURE_DIM = 8;
 const int SAMPLE_DIM = 64;
 
 // Unified iteration counts
-const int SCALAR_INV_ITERATIONS = 2;
+const int SCALAR_INV_ITERATIONS = 1;
 
 // Matrix inversion iterations by dimension (95th percentile)
 inline int getInversionIterations(int d) {
@@ -22,7 +22,7 @@ inline int getInversionIterations(int d) {
         case 8:  return 22;
         case 16: return 25;
         case 32: return 27;
-        case 64: return 31;
+        case 64: return 30;
         default: return 25;
     }
 }

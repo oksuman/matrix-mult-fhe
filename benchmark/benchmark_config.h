@@ -19,7 +19,7 @@ using namespace lbcrypto;
 namespace BenchmarkConfig {
 
 // Encryption Parameters (unified for all benchmarks)
-constexpr int MULT_DEPTH = 32;
+constexpr int MULT_DEPTH = 36;
 constexpr int FIRST_MOD_SIZE = 60;
 constexpr int SCALE_MOD_SIZE = 59;
 // LEVEL_BUDGET: use {4, 4} when creating std::vector
@@ -31,14 +31,14 @@ constexpr int getInversionIterations(int d) {
         case 8:  return 22;
         case 16: return 25;
         case 32: return 27;
-        case 64: return 31;
+        case 64: return 30;
         default: return 25;
     }
 }
 
-// Scalar Inversion Iterations: 4 for all
+// Scalar Inversion Iterations: 1 for all
 constexpr int getScalarInvIterations(int d) {
-    return 4;
+    return 1;
 }
 
 // Benchmark Execution

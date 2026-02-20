@@ -4,6 +4,8 @@
 # Single-thread mode for reproducible results
 export OMP_NUM_THREADS=1
 
+RESULT_FILE="lr_benchmark_results.txt"
+
 echo "=============================================="
 echo "  Linear Regression Benchmark"
 echo "=============================================="
@@ -21,6 +23,16 @@ fi
 
 cd "$BUILD_DIR"
 
+# Initialize result file
+cat > "$RESULT_FILE" << EOL
+==============================================================================
+  Linear Regression Benchmark Results
+  Date: $(date)
+  OMP_NUM_THREADS: $OMP_NUM_THREADS
+==============================================================================
+
+EOL
+
 run_app() {
     local name=$1
     local exec=$2
@@ -33,7 +45,7 @@ run_app() {
         echo "Cooling down before $name..."
         sleep 30
 
-        OMP_NUM_THREADS=1 ./$exec
+        OMP_NUM_THREADS=1 ./$exec 2>&1 | tee -a "$RESULT_FILE"
 
         echo ""
         echo "Cooling down after $name..."
@@ -46,20 +58,12 @@ run_app() {
 # Run plaintext baseline
 run_app "Plaintext Baseline" "lr_plaintext"
 
-# Run encrypted versions
-run_app "Encrypted (NewCol)" "lr_newcol"
-run_app "Encrypted (AR24)" "lr_ar24"
+# Run encrypted comparison (Naive vs NewCol vs AR24)
+run_app "Encrypted (Naive/NewCol/AR24)" "lr_benchmark"
 
 echo ""
 echo "=============================================="
 echo "  Linear Regression Benchmark Complete"
 echo "=============================================="
 echo "End time: $(date)"
-
-# Generate app summary if all benchmarks are done
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [ -f "$SCRIPT_DIR/generate_app_summary.sh" ]; then
-    echo ""
-    echo "Generating app summary..."
-    bash "$SCRIPT_DIR/generate_app_summary.sh"
-fi
+echo "Results saved to: $BUILD_DIR/$RESULT_FILE"

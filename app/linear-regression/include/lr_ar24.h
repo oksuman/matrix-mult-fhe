@@ -8,20 +8,18 @@ private:
     const int m_maxBatch;
     const int m_multDepth;
 
-    std::vector<double> generatePhiMsk(int k, int d, int s) {
-        std::vector<double> msk(d * d * s, 0);
-        for (int i = k; i < d * d * s; i += d) {
+    std::vector<double> generatePhiMsk(int k, int d) {
+        std::vector<double> msk(d * d, 0);
+        for (int i = k; i < d * d; i += d) {
             msk[i] = 1;
         }
         return msk;
     }
 
-    std::vector<double> generatePsiMsk(int k, int d, int s) {
-        std::vector<double> msk(d * d * s, 0);
-        for (int i = 0; i < s; i++) {
-            for (int j = i * d * d + k * d; j < i * d * d + k * d + d; j++) {
-                msk[j] = 1;
-            }
+    std::vector<double> generatePsiMsk(int k, int d) {
+        std::vector<double> msk(d * d, 0);
+        for (int j = k; j < k + d; j++) {
+            msk[j] = 1;
         }
         return msk;
     }
@@ -55,7 +53,7 @@ private:
 
         // Build Tilde_A
         for (int i = 0; i < B; i++) {
-            auto phi_si = m_cc->MakeCKKSPackedPlaintext(generatePhiMsk(s * i, d, s), 1, 0, nullptr, num_slots);
+            auto phi_si = m_cc->MakeCKKSPackedPlaintext(generatePhiMsk(s * i, d), 1, 0, nullptr, d * d);
             auto tmp = m_cc->EvalMult(matrixA_copy, phi_si);
             tmp = rot.rotate(tmp, s * i);
             for (int j = 0; j < (int)log2(d); j++) {
@@ -66,7 +64,7 @@ private:
 
         // Build Tilde_B
         for (int i = 0; i < B; i++) {
-            auto psi_si = m_cc->MakeCKKSPackedPlaintext(generatePsiMsk(s * i, d, s), 1, 0, nullptr, num_slots);
+            auto psi_si = m_cc->MakeCKKSPackedPlaintext(generatePsiMsk(s * i, d), 1, 0, nullptr, d * d);
             auto tmp = m_cc->EvalMult(matrixB_copy, psi_si);
             tmp = rot.rotate(tmp, s * i * d);
             for (int j = 0; j < (int)log2(d); j++) {
@@ -109,7 +107,7 @@ private:
         auto trace = this->eval_trace(M, d, d * d);
         // upperBound = SAMPLE_DIM * FEATURE_DIM = 64 * 8 = 512
         double traceUpperBound = static_cast<double>(SAMPLE_DIM) * FEATURE_DIM;
-        auto trace_reciprocal = this->eval_scalar_inverse(trace, traceUpperBound, SCALAR_INV_ITERATIONS, d * d);
+        auto trace_reciprocal = this->eval_scalar_inverse(trace, traceUpperBound, 1, d * d);
  
         auto Y = this->m_cc->EvalMult(pI, trace_reciprocal);
         auto A_bar = this->m_cc->EvalSub(pI, this->m_cc->EvalMultAndRelinearize(M, trace_reciprocal));
@@ -125,9 +123,9 @@ private:
 
             if ((int)Y->GetLevel() >= this->m_multDepth - 3) {
                 A_bar->SetSlots(d * d);
-                A_bar = m_cc->EvalBootstrap(A_bar, 2);
+                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
                 Y->SetSlots(d * d);
-                Y = m_cc->EvalBootstrap(Y, 2);
+                Y = m_cc->EvalBootstrap(Y, 2, 18);
 
                 A_bar->SetSlots(d * d * s);
                 A_bar = this->clean(A_bar, s, d);
@@ -143,7 +141,7 @@ private:
         Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI2, A_bar), d, s);
         Y->SetSlots(d * d);
         if ((int)Y->GetLevel() >= this->m_multDepth - 3) {
-            Y = m_cc->EvalBootstrap(Y, 2);
+            Y = m_cc->EvalBootstrap(Y, 2, 18);
         }
 
         return Y;
@@ -213,7 +211,7 @@ public:
         if (m_verbose) std::cout << "\n[Step 2] Computing (X^T * X)^{-1} with AR24..." << std::endl;
         int s2 = std::min(FEATURE_DIM, m_maxBatch / FEATURE_DIM /FEATURE_DIM);
         auto step2_start = high_resolution_clock::now();
-        auto inv_XtX = eval_inverse(rebatched_XtX, s2, FEATURE_DIM, getInversionIterations(FEATURE_DIM));
+        auto inv_XtX = eval_inverse(rebatched_XtX, s2, FEATURE_DIM, 18);
         auto step2_end = high_resolution_clock::now();
 
         if (m_verbose) {

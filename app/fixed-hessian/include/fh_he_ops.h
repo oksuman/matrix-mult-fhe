@@ -11,7 +11,7 @@
 // Simulates SIMD operations that will be performed on encrypted data
 // Based on LDA's lda_plaintext_ops.h, extended for LR-specific operations
 
-class LROps {
+class FHOps {
 public:
     // Rotate vector left by rotateIndex (positive = left, negative = right)
     static std::vector<double> rotate(const std::vector<double>& vec, int rotateIndex) {

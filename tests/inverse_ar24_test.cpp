@@ -36,7 +36,7 @@ template <int d> class MatrixInverseAR24TestFixture : public ::testing::Test {
             bsgsDim = {0, 0};
             break;
         case 8:
-            r = 21;
+            r = 22;
             multDepth = 31;
             scaleModSize = 59;
             firstModSize = 60;
@@ -54,7 +54,7 @@ template <int d> class MatrixInverseAR24TestFixture : public ::testing::Test {
             bsgsDim = {0, 0};
             break;
         case 32:
-            r = 28;
+            r = 27;
             multDepth = 31;
             scaleModSize = 59;
             firstModSize = 60;
@@ -63,7 +63,7 @@ template <int d> class MatrixInverseAR24TestFixture : public ::testing::Test {
             bsgsDim = {0, 0};
             break;
         case 64:
-            r = 31;
+            r = 30;
             multDepth = 31;
             scaleModSize = 59;
             firstModSize = 60;

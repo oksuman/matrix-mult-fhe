@@ -21,7 +21,7 @@ protected:
             r = 18;
             break;
         case 8:
-            r = 21;
+            r = 22;
             break;
         case 16:
             r = 25;

@@ -23,16 +23,16 @@ template <int d> class MatrixInvDiagTest : public ::testing::Test {
             r = 18;
             break;
         case 8:
-            r = 21;
+            r = 22;
             break;
         case 16:
             r = 25;
             break;
         case 32:
-            r = 28;
+            r = 27;
             break;
         case 64:
-            r = 31;
+            r = 30;
             break;
         default:
             r = -8; // For multiplication-only tests

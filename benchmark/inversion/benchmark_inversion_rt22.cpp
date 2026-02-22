@@ -115,6 +115,18 @@ void runInversionBenchmark(int numRuns = 1) {
     avgError.print();
 }
 
+void runForDimension(int d, int numRuns) {
+    switch (d) {
+        case 4:  runInversionBenchmark<4>(numRuns);  break;
+        case 8:  runInversionBenchmark<8>(numRuns);  break;
+        case 16: runInversionBenchmark<16>(numRuns); break;
+        case 32: runInversionBenchmark<32>(numRuns); break;
+        default:
+            std::cerr << "Unsupported dimension for RT22: " << d << std::endl;
+            break;
+    }
+}
+
 int main(int argc, char* argv[]) {
     int numRuns = 1;
     if (argc > 1) numRuns = std::atoi(argv[1]);
@@ -131,11 +143,16 @@ int main(int argc, char* argv[]) {
     std::cout << "OpenMP: Not enabled (single thread)" << std::endl;
     #endif
 
-    runInversionBenchmark<4>(numRuns);
-    runInversionBenchmark<8>(numRuns);
-    runInversionBenchmark<16>(numRuns);
-    runInversionBenchmark<32>(numRuns);
-    // RT22 doesn't support d=64 (batchSize=d^3 constraint)
+    if (argc > 2) {
+        int d = std::atoi(argv[2]);
+        runForDimension(d, numRuns);
+    } else {
+        runInversionBenchmark<4>(numRuns);
+        runInversionBenchmark<8>(numRuns);
+        runInversionBenchmark<16>(numRuns);
+        runInversionBenchmark<32>(numRuns);
+        // RT22 doesn't support d=64 (batchSize=d^3 constraint)
+    }
 
     std::cout << "\n============================================" << std::endl;
     std::cout << "  Benchmark Complete" << std::endl;

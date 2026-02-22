@@ -114,6 +114,17 @@ void runInversionBenchmark(int numRuns = 1) {
     avgError.print();
 }
 
+void runForDimension(int d, int numRuns) {
+    switch (d) {
+        case 4:  runInversionBenchmark<4>(numRuns);  break;
+        case 8:  runInversionBenchmark<8>(numRuns);  break;
+        case 16: runInversionBenchmark<16>(numRuns); break;
+        default:
+            std::cerr << "Unsupported dimension for Naive: " << d << " (max d=16)" << std::endl;
+            break;
+    }
+}
+
 int main(int argc, char* argv[]) {
     int numRuns = 1;
     if (argc > 1) numRuns = std::atoi(argv[1]);
@@ -122,7 +133,7 @@ int main(int argc, char* argv[]) {
     std::cout << "  Matrix Inversion Benchmark - Naive" << std::endl;
     std::cout << "============================================" << std::endl;
     std::cout << "Runs per dimension: " << numRuns << std::endl;
-    std::cout << "Note: Limited to d<=8 due to d^2 ciphertexts" << std::endl;
+    std::cout << "Note: Limited to d<=16 due to d^2 ciphertexts" << std::endl;
 
     #ifdef _OPENMP
     omp_set_num_threads(1);
@@ -131,8 +142,13 @@ int main(int argc, char* argv[]) {
     std::cout << "OpenMP: Not enabled (single thread)" << std::endl;
     #endif
 
-    runInversionBenchmark<4>(numRuns);
-    runInversionBenchmark<8>(numRuns);
+    if (argc > 2) {
+        int d = std::atoi(argv[2]);
+        runForDimension(d, numRuns);
+    } else {
+        runInversionBenchmark<4>(numRuns);
+        runInversionBenchmark<8>(numRuns);
+    }
 
     std::cout << "\n============================================" << std::endl;
     std::cout << "  Benchmark Complete" << std::endl;

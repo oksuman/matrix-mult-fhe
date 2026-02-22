@@ -19,7 +19,7 @@ using namespace lbcrypto;
 namespace BenchmarkConfig {
 
 // Encryption Parameters (unified for all benchmarks)
-constexpr int MULT_DEPTH = 36;
+constexpr int MULT_DEPTH = 30;
 constexpr int FIRST_MOD_SIZE = 60;
 constexpr int SCALE_MOD_SIZE = 59;
 // LEVEL_BUDGET: use {4, 4} when creating std::vector

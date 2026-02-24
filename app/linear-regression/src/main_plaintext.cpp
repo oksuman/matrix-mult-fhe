@@ -2,7 +2,6 @@
 #include "lr_plaintext_ops.h"
 #include "csv_processor.h"
 #include <iostream>
-#include <fstream>
 #include <chrono>
 
 const int FEATURE_DIM = 8;
@@ -137,39 +136,6 @@ int main() {
     std::cout << "###############################################################" << std::endl;
 
     auto result = runPlaintextLR(trainFile, testFile, 18, true);
-
-    // Save results
-    std::ofstream outFile("plaintext_lr_results.txt");
-    outFile << "=== Plaintext Linear Regression Results ===" << std::endl;
-    outFile << "\nWeights:" << std::endl;
-    for (int i = 0; i < FEATURE_DIM; i++) {
-        outFile << "  w[" << i << "] = " << std::setprecision(8) << result.weights[i] << std::endl;
-    }
-    outFile << "\nMSE: " << result.mse << std::endl;
-
-    outFile << "\nX^T * X (8x8):" << std::endl;
-    for (int i = 0; i < FEATURE_DIM; i++) {
-        for (int j = 0; j < FEATURE_DIM; j++) {
-            outFile << std::setw(14) << std::setprecision(6) << result.XtX_rebatched[i * FEATURE_DIM + j];
-        }
-        outFile << std::endl;
-    }
-
-    outFile << "\n(X^T * X)^{-1} (8x8):" << std::endl;
-    for (int i = 0; i < FEATURE_DIM; i++) {
-        for (int j = 0; j < FEATURE_DIM; j++) {
-            outFile << std::setw(14) << std::setprecision(6) << result.XtX_inv[i * FEATURE_DIM + j];
-        }
-        outFile << std::endl;
-    }
-
-    outFile << "\nX^T * y:" << std::endl;
-    for (int i = 0; i < FEATURE_DIM; i++) {
-        outFile << "  " << std::setprecision(8) << result.Xty[i] << std::endl;
-    }
-
-    outFile.close();
-    std::cout << "\nResults saved to plaintext_lr_results.txt" << std::endl;
 
     return 0;
 }

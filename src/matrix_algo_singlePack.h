@@ -158,6 +158,44 @@ class MatrixOperationBase {
         return M_transposed;
     }
 
+    // scaleFactor * M^T 를 한 번의 호출로 계산한다.
+    // masking vector 값을 1 대신 scaleFactor 로 설정하여
+    // transpose 연산과 상수 배율 적용을 동시에 수행한다.
+    Ciphertext<DCRTPoly> eval_transpose_scaled(Ciphertext<DCRTPoly> M, double scaleFactor) {
+        constexpr int bs = (d == 4) ? 2 : (d == 8) ? 3 : (d == 16) ? 4 : 8;
+        constexpr int batchSize = d * d;
+
+        std::vector<Ciphertext<DCRTPoly>> babyStepsOfM(bs);
+        for (int i = 0; i < bs; i++) {
+            babyStepsOfM[i] = rot.rotate(M, (d - 1) * i);
+        }
+
+        std::vector<double> zeroVec(batchSize, 0.0);
+        auto pZero = m_cc->MakeCKKSPackedPlaintext(zeroVec, 1, 0, nullptr, batchSize);
+        auto M_transposed = m_cc->Encrypt(m_PublicKey, pZero);
+
+        for (int i = -bs; i < bs; i++) {
+            auto tmp = m_cc->Encrypt(m_PublicKey, pZero);
+            int js = (i == -bs) ? 1 : 0;
+            for (int j = js; j < bs; j++) {
+                int k = bs * i + j;
+                if (k >= d || k <= -d) continue;
+                auto vmsk = generateTransposeMsk(k);
+                // mask 값에 scaleFactor 를 적용 → scaleFactor * M^T 를 직접 계산
+                for (auto& v : vmsk) v *= scaleFactor;
+                vmsk = vectorRotate(vmsk, -bs * (d - 1) * i);
+                auto pmsk = m_cc->MakeCKKSPackedPlaintext(vmsk, 1, 0, nullptr, batchSize);
+                m_cc->EvalAddInPlace(tmp, m_cc->EvalMult(babyStepsOfM[j], pmsk));
+            }
+            int rotAmount = bs * (d - 1) * i;
+            rotAmount = ((rotAmount % batchSize) + batchSize) % batchSize;
+            if (rotAmount != 0) tmp = rot.rotate(tmp, rotAmount);
+            m_cc->EvalAddInPlace(M_transposed, tmp);
+        }
+
+        return M_transposed;
+    }
+
     Ciphertext<DCRTPoly> eval_trace(Ciphertext<DCRTPoly> M, int batchSize) {
         std::vector<double> msk(batchSize, 0);
         for (int i = 0; i < d * d; i += (d + 1)) {

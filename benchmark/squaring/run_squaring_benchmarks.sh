@@ -1,7 +1,13 @@
 #!/bin/bash
 
-# Single-thread mode for reproducible benchmarks
-export OMP_NUM_THREADS=1
+# ============================================================
+# Hardware Setting (shared across all benchmark scripts)
+# Override: OMP_NUM_THREADS=8 ./run_squaring_benchmarks.sh
+# ============================================================
+if [ -z "$OMP_NUM_THREADS" ]; then
+    NCORES=$(sysctl -n hw.physicalcpu 2>/dev/null || nproc --all 2>/dev/null || echo 16)
+    export OMP_NUM_THREADS=$NCORES
+fi
 
 NUM_RUNS=${1:-1}
 
@@ -9,7 +15,7 @@ echo "============================================"
 echo "  Matrix Squaring Benchmarks"
 echo "============================================"
 echo "Runs per dimension: $NUM_RUNS"
-echo "Single-thread mode enabled"
+echo "OMP_NUM_THREADS: $OMP_NUM_THREADS"
 echo ""
 
 run_benchmark() {
@@ -19,20 +25,17 @@ run_benchmark() {
     echo "  Running $algo"
     echo "========================================"
 
-    # Cooling period before benchmark
     echo "System cooling (45s)..."
     sleep 45
     sync
 
-    # Run benchmark
-    OMP_NUM_THREADS=1 ./$algo $NUM_RUNS 2>&1 | tee -a squaring_benchmark_results.txt
+    ./$algo $NUM_RUNS 2>&1 | tee -a squaring_console.log
 
     if [ ${PIPESTATUS[0]} -ne 0 ]; then
         echo "Error running $algo"
         return 1
     fi
 
-    # Cooling period after benchmark
     echo ""
     echo "Cooling down (45s)..."
     sleep 45
@@ -50,7 +53,7 @@ SQUARING_ALGORITHMS=(
 )
 
 # Initialize result file
-cat > squaring_benchmark_results.txt << EOL
+cat > squaring_console.log << EOL
 ============================================
   Matrix Squaring Benchmark Results
 ============================================
@@ -67,19 +70,17 @@ for algo in "${SQUARING_ALGORITHMS[@]}"; do
     run_benchmark $algo
 done
 
-# Add footer to results file
-echo "" >> squaring_benchmark_results.txt
-echo "============================================" >> squaring_benchmark_results.txt
-echo "  All Benchmarks Complete" >> squaring_benchmark_results.txt
-echo "============================================" >> squaring_benchmark_results.txt
+echo "" >> squaring_console.log
+echo "============================================" >> squaring_console.log
+echo "  All Benchmarks Complete" >> squaring_console.log
+echo "============================================" >> squaring_console.log
 
 echo ""
 echo "============================================"
 echo "  All Benchmarks Complete"
 echo "============================================"
-echo "Results saved in squaring_benchmark_results.txt"
+echo "Results saved in squaring_console.log"
 
-# Generate summary tables
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -f "$SCRIPT_DIR/generate_summary_table.sh" ]; then
     echo ""

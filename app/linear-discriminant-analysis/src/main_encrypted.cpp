@@ -150,6 +150,12 @@ void saveEncryptedResults(const std::string& filename,
     std::ofstream file(filename);
     if (!file.is_open()) return;
 
+    {
+        auto now = std::chrono::system_clock::now();
+        auto t = std::chrono::system_clock::to_time_t(now);
+        file << "Generated: " << std::ctime(&t);
+    }
+
     size_t f = dataset.numFeatures;
     size_t f_tilde = dataset.paddedFeatures;
 
@@ -311,7 +317,6 @@ LDAExperimentResult runEncryptedLDA(const std::string& algorithmName,
 
 int main(int argc, char* argv[]) {
     #ifdef _OPENMP
-    omp_set_num_threads(1);
     #endif
 
     bool debugMode = true;

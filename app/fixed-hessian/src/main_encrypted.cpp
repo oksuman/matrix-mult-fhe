@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 #include <cmath>
+#include <ctime>
+#include <fstream>
 #include <set>
 
 #ifdef _OPENMP
@@ -67,6 +69,77 @@ struct SFHCheckpointResult {
     double totalTimeSec;
     EvalMetrics::ClassificationResult classResult;
 };
+
+void saveFHResults(const std::string& filename,
+                   const FHExperimentResult& ar24Result,
+                   const FHExperimentResult& newcolResult,
+                   const std::vector<SFHCheckpointResult>& sfhResults,
+                   int numTestSamples) {
+    std::ofstream file(filename);
+    if (!file.is_open()) {
+        std::cerr << "Failed to open: " << filename << std::endl;
+        return;
+    }
+
+    auto now = std::chrono::system_clock::now();
+    auto time = std::chrono::system_clock::to_time_t(now);
+
+    file << "================================================================\n";
+    file << "  FH Benchmark Results\n";
+    file << "  Generated: " << std::ctime(&time);
+    file << "================================================================\n\n";
+
+    file << "--- Configuration ---\n";
+    file << "Training samples: " << FH_BATCH_SIZE << "\n";
+    file << "Test samples:     " << numTestSamples << "\n";
+    file << "Features (raw):   " << FH_RAW_FEATURES << "\n";
+    file << "Trials:           1\n\n";
+
+    file << std::fixed;
+
+    file << "================================================================\n";
+    file << "  TIMING & ACCURACY COMPARISON\n";
+    file << "================================================================\n\n";
+
+    file << std::left  << std::setw(22) << "  Method"
+         << " | " << std::right << std::setw(4) << "Iter"
+         << " | " << std::setw(9) << "Time (s)"
+         << " | " << std::setw(9) << "Accuracy"
+         << " | " << std::setw(8) << "F1 Score" << "\n";
+    file << "  " << std::string(60, '-') << "\n";
+
+    if (ar24Result.valid) {
+        file << std::left  << std::setw(22) << "  FH (AR24)"
+             << " | " << std::right << std::setw(4) << 1
+             << " | " << std::setw(9) << std::setprecision(2) << ar24Result.totalTime.count()
+             << " | " << std::setw(8) << ar24Result.classResult.accuracy() << "%"
+             << " | " << std::setw(7) << ar24Result.classResult.f1Score() << "%\n";
+    }
+
+    if (newcolResult.valid) {
+        file << std::left  << std::setw(22) << "  FH (NewCol)"
+             << " | " << std::right << std::setw(4) << 1
+             << " | " << std::setw(9) << std::setprecision(2) << newcolResult.totalTime.count()
+             << " | " << std::setw(8) << newcolResult.classResult.accuracy() << "%"
+             << " | " << std::setw(7) << newcolResult.classResult.f1Score() << "%\n";
+    }
+
+    for (const auto& cp : sfhResults) {
+        file << std::left  << std::setw(22) << "  SFH"
+             << " | " << std::right << std::setw(4) << cp.iterations
+             << " | " << std::setw(9) << std::setprecision(2) << cp.totalTimeSec
+             << " | " << std::setw(8) << cp.classResult.accuracy() << "%"
+             << " | " << std::setw(7) << cp.classResult.f1Score() << "%\n";
+    }
+
+    file << "  " << std::string(62, '=') << "\n";
+    file << "\n================================================================\n";
+    file << "  END OF REPORT\n";
+    file << "================================================================\n";
+
+    file.close();
+    std::cout << "\nResults saved to: " << filename << std::endl;
+}
 
 template<typename InvAlgorithm>
 FHExperimentResult runFixedHessian(const std::string& algorithmName,
@@ -494,17 +567,30 @@ std::vector<SFHCheckpointResult> runSimplifiedHessian(
     auto XtX_16_dd = XtX_16->Clone();
     XtX_16_dd->SetSlots(slots16);
 
+    auto bootIfNeeded = [&](Ciphertext<DCRTPoly>& ct) {
+        if ((int)ct->GetLevel() >= multDepth - 1) {
+            ct->SetSlots(f);
+            ct = cc->EvalBootstrap(ct, 2, 18);
+            ct->SetSlots(slots16);
+            bootstrapCount++;
+        }
+    };
+
     for (int iter = 0; iter < maxIter; iter++) {
         auto w_col = algo.eval_transpose(w_enc, f, slots16);
-        auto XtXw = cc->EvalMultAndRelinearize(XtX_16_dd, w_col);
+        bootIfNeeded(w_col);
 
+        auto XtXw = cc->EvalMultAndRelinearize(XtX_16_dd, w_col);
         for (int i = 0; i < (int)log2(f); i++) {
             int shift = f * (1 << i);
             cc->EvalAddInPlace(XtXw, cc->EvalRotate(XtXw, shift));
         }
+        bootIfNeeded(XtXw);
 
         auto XtXw_scaled = cc->EvalMult(XtXw, 0.25);
         auto g = cc->EvalSub(Xty_scaled, XtXw_scaled);
+        bootIfNeeded(g);
+
         auto delta_w = cc->EvalMultAndRelinearize(invDiag, g);
 
         if (iter < 2 && verbose) {
@@ -529,7 +615,7 @@ std::vector<SFHCheckpointResult> runSimplifiedHessian(
         std::cout << "  [Iter " << (iter + 1) << "] w level: " << w_enc->GetLevel()
                   << "/" << multDepth;
 
-        if ((int)w_enc->GetLevel() >= multDepth - 3) {
+        if ((int)w_enc->GetLevel() >= multDepth - 1) {
             std::cout << " -> Bootstrapping (pre-level: " << w_enc->GetLevel() << "/" << multDepth << ")...";
             w_enc->SetSlots(f);
             w_enc = cc->EvalBootstrap(w_enc, 2, 18);
@@ -613,7 +699,6 @@ std::vector<SFHCheckpointResult> runSimplifiedHessian(
 
 int main(int argc, char* argv[]) {
     #ifdef _OPENMP
-    omp_set_num_threads(1);
     #endif
 
     bool verbose = true;
@@ -690,7 +775,7 @@ int main(int argc, char* argv[]) {
     int multDepth;
     uint32_t scalingModSize, firstModSize;
 
-    multDepth = 30;
+    multDepth = 31;
     scalingModSize = 59;
     firstModSize = 60;
 
@@ -731,7 +816,7 @@ int main(int argc, char* argv[]) {
 
     if (useBootstrapping) {
         std::cout << "Setting up bootstrapping..." << std::flush;
-        std::vector<uint32_t> levelBudget = {4, 4};
+        std::vector<uint32_t> levelBudget = {4, 5};
         std::vector<uint32_t> bsgsDim = {0, 0};
         cc->EvalBootstrapSetup(levelBudget, bsgsDim, FH_FEATURES * FH_FEATURES);
         cc->EvalBootstrapSetup(levelBudget, bsgsDim, FH_FEATURES);
@@ -821,6 +906,8 @@ int main(int argc, char* argv[]) {
 
         std::cout << "================================================================" << std::endl;
     }
+
+    saveFHResults("fh_results.txt", ar24Result, newcolResult, sfhResults, (int)testSet.numSamples);
 
     std::cout << "\n" << std::string(60, '=') << std::endl;
     std::cout << "  All experiments completed!" << std::endl;

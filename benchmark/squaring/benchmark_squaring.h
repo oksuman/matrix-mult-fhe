@@ -69,12 +69,19 @@ inline std::vector<double> generateRandomMatrix(int d, unsigned seed = 42) {
 
 // Print benchmark header with parameters
 inline void printSquaringBenchmarkHeader(const std::string& algorithmName, int d, int numRuns,
-                                          int multDepth, int scalingMod, int ringDim) {
+                                          int multDepth, int scalingMod, int ringDim, int batchSize) {
     std::cout << "\n========== " << algorithmName << " d=" << d << " ==========" << std::endl;
-    std::cout << "Parameters:" << std::endl;
-    std::cout << "  Squaring iterations: " << SQUARING_ITERATIONS << std::endl;
-    std::cout << "  Mult depth: " << multDepth << std::endl;
-    std::cout << "  Scaling mod: " << scalingMod << std::endl;
-    std::cout << "  Ring dimension: " << ringDim << std::endl;
-    std::cout << "  Trials: " << numRuns << std::endl;
+    std::cout << "--- CKKS Parameters ---" << std::endl;
+    std::cout << "  multDepth:     " << multDepth
+              << " (" << SQUARING_ITERATIONS << " iter x "
+              << multDepth / SQUARING_ITERATIONS << " levels/iter)" << std::endl;
+    std::cout << "  scaleModSize:  " << scalingMod << " bits" << std::endl;
+    std::cout << "  batchSize:     " << batchSize << std::endl;
+    std::cout << "  ringDimension: " << ringDim << std::endl;
+    std::cout << "  security:      HEStd_128_classic" << std::endl;
+    std::cout << "  bootstrapping: None" << std::endl;
+    std::cout << "--- Experiment ---" << std::endl;
+    std::cout << "  squaringIter:  " << SQUARING_ITERATIONS << std::endl;
+    std::cout << "  trials:        " << numRuns << std::endl;
+    std::cout << "  seed:          42 (fixed)" << std::endl;
 }

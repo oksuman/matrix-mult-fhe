@@ -1,10 +1,15 @@
 #!/bin/bash
 
-# Linear Regression Benchmark Script
-# Single-thread mode for reproducible results
-export OMP_NUM_THREADS=1
+# ============================================================
+# Hardware Setting (shared across all benchmark scripts)
+# Override: OMP_NUM_THREADS=8 ./run_lr.sh
+# ============================================================
+if [ -z "$OMP_NUM_THREADS" ]; then
+    NCORES=$(sysctl -n hw.physicalcpu 2>/dev/null || nproc --all 2>/dev/null || echo 16)
+    export OMP_NUM_THREADS=$NCORES
+fi
 
-RESULT_FILE="lr_benchmark_results.txt"
+LOG_FILE="lr_console.log"
 
 echo "=============================================="
 echo "  Linear Regression Benchmark"
@@ -23,10 +28,10 @@ fi
 
 cd "$BUILD_DIR"
 
-# Initialize result file
-cat > "$RESULT_FILE" << EOL
+# Initialize log file
+cat > "$LOG_FILE" << EOL
 ==============================================================================
-  Linear Regression Benchmark Results
+  Linear Regression Benchmark Console Log
   Date: $(date)
   OMP_NUM_THREADS: $OMP_NUM_THREADS
 ==============================================================================
@@ -36,6 +41,8 @@ EOL
 run_app() {
     local name=$1
     local exec=$2
+    shift 2
+    local args="$@"
 
     echo "----------------------------------------------"
     echo "Running: $name"
@@ -45,7 +52,7 @@ run_app() {
         echo "Cooling down before $name..."
         sleep 30
 
-        OMP_NUM_THREADS=1 ./$exec 2>&1 | tee -a "$RESULT_FILE"
+        ./$exec $args 2>&1 | tee -a "$LOG_FILE"
 
         echo ""
         echo "Cooling down after $name..."
@@ -58,12 +65,13 @@ run_app() {
 # Run plaintext baseline
 run_app "Plaintext Baseline" "lr_plaintext"
 
-# Run encrypted comparison (Naive vs NewCol vs AR24)
-run_app "Encrypted (Naive/NewCol/AR24)" "lr_benchmark"
+# Run encrypted comparison (Naive vs NewCol vs AR24, writes lr_results.txt)
+run_app "Encrypted (Naive/NewCol/AR24)" "lr_benchmark" --benchmark
 
 echo ""
 echo "=============================================="
 echo "  Linear Regression Benchmark Complete"
 echo "=============================================="
 echo "End time: $(date)"
-echo "Results saved to: $BUILD_DIR/$RESULT_FILE"
+echo "Console log: $BUILD_DIR/$LOG_FILE"
+echo "Result file: $BUILD_DIR/lr_results.txt"

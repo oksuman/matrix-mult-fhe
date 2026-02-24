@@ -25,8 +25,7 @@ cd build/benchmark/inversion
 
 ## Output
 
-- `inversion_benchmark_results.txt` — raw output
-- `inversion_summary_time.txt` — time comparison table
-- `inversion_summary_accuracy.txt` — accuracy (log2 error) table
+- `inversion_console.log` — raw console output (for debugging)
+- `inversion_results.txt` — clean results: parameters, time table, accuracy table
 
-Summary tables are generated automatically via `generate_summary_table.sh`.
+`inversion_results.txt` is generated automatically via `generate_summary_table.sh`.

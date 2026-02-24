@@ -47,9 +47,18 @@ void runInversionBenchmark(int numRuns = 1) {
     auto enc = std::make_shared<Encryption>(cc, keyPair.publicKey);
     auto matOp = std::make_unique<MatrixOperations<d>>(enc, cc, keyPair.publicKey);
 
-    std::cout << "Ring Dimension: " << cc->GetRingDimension() << std::endl;
-    std::cout << "Iterations: " << r << std::endl;
-    std::cout << "Mult Depth: " << multDepth << std::endl;
+    std::cout << "--- CKKS Parameters ---" << std::endl;
+    std::cout << "  multDepth:     " << multDepth << std::endl;
+    std::cout << "  scaleModSize:  " << scaleModSize << " bits" << std::endl;
+    std::cout << "  firstModSize:  " << firstModSize << " bits" << std::endl;
+    std::cout << "  batchSize:     1 (one scalar per ciphertext)" << std::endl;
+    std::cout << "  ringDimension: " << cc->GetRingDimension() << std::endl;
+    std::cout << "  security:      HEStd_128_classic" << std::endl;
+    std::cout << "  bootstrapping: None" << std::endl;
+    std::cout << "--- Algorithm ---" << std::endl;
+    std::cout << "  invIter:       " << r << std::endl;
+    std::cout << "  trials:        " << numRuns << std::endl;
+    std::cout << "  seed:          1000+run" << std::endl;
 
     double totalTime = 0.0;
     ErrorMetrics avgError;
@@ -136,7 +145,6 @@ int main(int argc, char* argv[]) {
     std::cout << "Note: Limited to d<=16 due to d^2 ciphertexts" << std::endl;
 
     #ifdef _OPENMP
-    omp_set_num_threads(1);
     std::cout << "OpenMP Threads: " << omp_get_max_threads() << std::endl;
     #else
     std::cout << "OpenMP: Not enabled (single thread)" << std::endl;

@@ -78,10 +78,10 @@ private:
 
     Ciphertext<DCRTPoly>
     vecRotsOpt(const std::vector<Ciphertext<DCRTPoly>> &matrixM, int is, int s, int np, int d) {
-        auto rotsM = this->getZeroCiphertext(d)->Clone();
+        auto rotsM = makeZero(d*d*s);
         for (int j = 0; j < s / np; j++) {
 
-            auto T = this->getZeroCiphertext(d)->Clone();
+            auto T = makeZero(d*d*s);
 
             for (int i = 0; i < np; i++) {
                 auto msk = generateMaskVector(d*d*s, np * j + i, d);
@@ -98,7 +98,7 @@ private:
     }
 
     Ciphertext<DCRTPoly> vecRots(const Ciphertext<DCRTPoly> &matrixM, int is, int s, int d) {
-        auto rotsM = this->getZeroCiphertext(d)->Clone();
+        auto rotsM = makeZero(d*d*s);
         for (int j = 0; j < s; j++) {
             auto rotated_of_M = rot.rotate(matrixM, is * s * d + j * d);
             rotated_of_M->SetSlots(d*d*s);
@@ -112,15 +112,10 @@ private:
     }
 
 
-    Ciphertext<DCRTPoly> getZeroCiphertext(int d) {
-        std::vector<double> zeroVec(d*d, 0.0);
-        return m_enc->encryptInput(zeroVec);
-    }
-
     Ciphertext<DCRTPoly>
     eval_mult(const Ciphertext<DCRTPoly> &matrixA,
               const Ciphertext<DCRTPoly> &matrixB, int s1, int B1, int ng1, int nb1, int np1, int d){
-        auto matrixC = this->getZeroCiphertext(d)->Clone();
+        auto matrixC = makeZero(d*d*s1);
         Ciphertext<DCRTPoly> babyStepsOfA[nb1];
         std::vector<Ciphertext<DCRTPoly>> babyStepsOfB;
 
@@ -136,10 +131,10 @@ private:
 
         for (int i = 0; i < B1; i++) {
             auto batched_rotations_B = vecRotsOpt(babyStepsOfB, i, s1, np1, d);
-            auto diagA = this->getZeroCiphertext(d)->Clone();
+            auto diagA = makeZero(d*d*s1);
             for (int k = -ng1; k < ng1; k++) {
                 if (k < 0) {
-                    auto tmp = this->getZeroCiphertext(d)->Clone();
+                    auto tmp = makeZero(d*d*s1);
                     auto babyStep = (k == -ng1) ? 1 : 0;
 
                     for (int j = d * d + k * nb1 + 1 + babyStep;
@@ -155,7 +150,7 @@ private:
                     }
                     m_cc->EvalAddInPlace(diagA, rot.rotate(tmp, k * nb1));
                 } else { // k>=0
-                    auto tmp = this->getZeroCiphertext(d)->Clone();
+                    auto tmp = makeZero(d*d*s1);
                     auto babyStep = 0;
                     for (int j = k * nb1 + 1; j <= (k + 1) * nb1; j++) {
                         auto rotated_plain_vec = vectorRotate(
@@ -296,49 +291,21 @@ public:
         if (m_verbose) std::cout << "[Step 4] Computing weights..." << std::endl;
         auto step4_start = high_resolution_clock::now();
 
-        if (m_verbose) {
-            std::cout << "  inv_XtX slots: " << inv_XtX->GetSlots() << std::endl;
-            std::cout << "  Xty slots: " << Xty->GetSlots() << std::endl;
-        }
-
         auto Xty_transposed = eval_transpose(Xty, FEATURE_DIM, FEATURE_DIM * FEATURE_DIM);
 
         if (m_verbose) {
-            std::cout << "  Xty_transposed slots: " << Xty_transposed->GetSlots() << std::endl;
             debugPrintMatrix("Xty_transposed", Xty_transposed, FEATURE_DIM, FEATURE_DIM, FEATURE_DIM);
         }
 
         auto result = m_cc->EvalMultAndRelinearize(inv_XtX, Xty_transposed);
 
         if (m_verbose) {
-            std::cout << "  result (after mult) slots: " << result->GetSlots() << std::endl;
             debugPrintMatrix("inv_XtX * Xty_transposed", result, FEATURE_DIM, FEATURE_DIM, FEATURE_DIM);
-            std::cout << "  [Folding sum] Starting with slots: " << result->GetSlots() << std::endl;
-
-            Plaintext ptx;
-            m_cc->Decrypt(m_keyPair.secretKey, result, &ptx);
-            ptx->SetLength(256);
-            auto vals = ptx->GetRealPackedValue();
-            std::cout << "  Total vals size: " << vals.size() << std::endl;
-            std::cout << "  Slots 64-71: ";
-            for (int i = 64; i < 72 && i < (int)vals.size(); i++) {
-                std::cout << std::setprecision(6) << vals[i] << " ";
-            }
-            std::cout << std::endl;
-            std::cout << "  Slots 128-135: ";
-            for (int i = 128; i < 136 && i < (int)vals.size(); i++) {
-                std::cout << std::setprecision(6) << vals[i] << " ";
-            }
-            std::cout << std::endl;
         }
 
         for (int i = (int)log2(FEATURE_DIM) - 1; i >= 0; i--) {
             int shift = FEATURE_DIM * (1 << i);
             m_cc->EvalAddInPlace(result, rot.rotate(result, shift));
-            if (m_verbose) {
-                std::cout << "  After rotate by " << shift << ":" << std::endl;
-                debugPrintMatrix("result", result, FEATURE_DIM, FEATURE_DIM, FEATURE_DIM);
-            }
         }
 
         m_weights = result;

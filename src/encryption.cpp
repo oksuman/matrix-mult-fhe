@@ -13,7 +13,7 @@ Ciphertext<DCRTPoly> Encryption::encryptInput(std::vector<double> input) {
     if (!this->m_PublicKey) {
         throw std::runtime_error("Public key is not initialized");
     }
-    Plaintext plaintext = m_cc->MakeCKKSPackedPlaintext(input);
+    Plaintext plaintext = m_cc->MakeCKKSPackedPlaintext(input, 1, 0, nullptr, input.size());
     auto ciphertext = m_cc->Encrypt(m_PublicKey, plaintext);
     return ciphertext;
 }

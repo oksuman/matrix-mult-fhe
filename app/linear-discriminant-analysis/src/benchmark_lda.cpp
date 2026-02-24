@@ -18,6 +18,7 @@
 #include <iomanip>
 #include <fstream>
 #include <chrono>
+#include <thread>
 #include <filesystem>
 #include <ctime>
 
@@ -176,6 +177,7 @@ void saveBenchmarkResults(const std::string& filename,
                           const BenchmarkResult& newcol,
                           const BenchmarkResult& ar24,
                           int numSamples,
+                          int numTestSamples,
                           int inversionIters) {
     std::ofstream file(filename);
     if (!file.is_open()) {
@@ -194,6 +196,7 @@ void saveBenchmarkResults(const std::string& filename,
 
     file << "--- Configuration ---\n";
     file << "Training samples: " << numSamples << "\n";
+    file << "Test samples:     " << numTestSamples << "\n";
     file << "Inversion iterations: " << inversionIters << "\n";
     file << "Bootstrapping: " << (USE_BOOTSTRAPPING ? "enabled" : "disabled") << "\n";
     file << "Number of trials: " << newcol.num_trials << "\n\n";
@@ -280,136 +283,19 @@ void saveBenchmarkResults(const std::string& filename,
     std::cout << "\nResults saved to: " << filename << std::endl;
 }
 
-// ============ Run Single Algorithm with Multiple Trials ============
+// ============ Run Single Algorithm — Isolated CC ============
 template<typename LDAAlgorithm>
-BenchmarkResult runBenchmark(
+BenchmarkResult runAlgorithmIsolated(
     const std::string& algorithmName,
-    std::shared_ptr<Encryption> enc,
-    CryptoContext<DCRTPoly> cc,
-    KeyPair<DCRTPoly> keyPair,
-    const std::vector<int>& rotIndices,
-    const std::vector<Ciphertext<DCRTPoly>>& classDataEncrypted,
     const LDADataset& trainSet,
     const LDADataset& testSet,
-    int multDepth) {
+    const EncodedData& encoded,
+    int largeDim) {
 
-    std::cout << "Running " << algorithmName << " (" << NUM_TRIALS << " trial"
-              << (NUM_TRIALS > 1 ? "s" : "") << ")..." << std::flush;
+    std::cout << "\n--- Setting up CKKS for " << algorithmName << " ---" << std::endl;
 
-    // Accumulate timing over trials
-    double total_time_sw = 0, total_time_inv = 0, total_time_w = 0, total_time_total = 0;
-    BenchmarkResult finalResult;
-    finalResult.algorithm = algorithmName;
-    finalResult.num_trials = NUM_TRIALS;
-
-    for (int trial = 0; trial < NUM_TRIALS; trial++) {
-#if BENCHMARK_VERBOSE
-        std::cout << "\n  Trial " << (trial + 1) << "/" << NUM_TRIALS << ":" << std::endl;
-#endif
-
-        LDAAlgorithm lda(enc, cc, keyPair, rotIndices, multDepth, USE_BOOTSTRAPPING);
-
-        LDATimingResult timings;
-        auto result = lda.trainWithTimings(classDataEncrypted, trainSet,
-                                            INVERSION_ITERATIONS, timings,
-                                            BENCHMARK_VERBOSE, false);
-
-        // Measure w computation time separately
-        auto wStart = std::chrono::high_resolution_clock::now();
-
-        size_t f = testSet.numFeatures;
-        size_t f_tilde = testSet.paddedFeatures;
-        std::vector<double> mu_diff(f, 0.0);
-        for (size_t i = 0; i < f; i++) {
-            mu_diff[i] = result.classMeans[1][i] - result.classMeans[0][i];
-        }
-        std::vector<double> w(f, 0.0);
-        for (size_t i = 0; i < f; i++) {
-            for (size_t j = 0; j < f; j++) {
-                w[i] += result.Sw_inv_decrypted[i * f_tilde + j] * mu_diff[j];
-            }
-        }
-
-        auto wEnd = std::chrono::high_resolution_clock::now();
-        double time_w = std::chrono::duration<double>(wEnd - wStart).count();
-
-        // Get metrics (will be same for all trials)
-        finalResult = performInferenceWithMetrics(result, testSet, timings, time_w, algorithmName);
-
-        // Accumulate timing
-        total_time_sw += timings.swComputation.count();
-        total_time_inv += timings.inversionTime.count();
-        total_time_w += time_w;
-        total_time_total += timings.totalTime.count();
-
-#if BENCHMARK_VERBOSE
-        std::cout << "    Time: " << std::fixed << std::setprecision(1)
-                  << timings.totalTime.count() << "s" << std::endl;
-#endif
-    }
-
-    // Compute averages
-    finalResult.num_trials = NUM_TRIALS;
-    finalResult.time_sw = total_time_sw / NUM_TRIALS;
-    finalResult.time_sw_inv = total_time_inv / NUM_TRIALS;
-    finalResult.time_w = total_time_w / NUM_TRIALS;
-    finalResult.time_total = total_time_total / NUM_TRIALS;
-
-    std::cout << " Done. (avg: " << std::fixed << std::setprecision(1)
-              << finalResult.time_total << "s)" << std::endl;
-
-    return finalResult;
-}
-
-// ============ Main ============
-int main() {
-    #ifdef _OPENMP
-    omp_set_num_threads(1);
-    #endif
-
-    std::cout << "\n";
-    std::cout << "###############################################################\n";
-    std::cout << "#                                                             #\n";
-    std::cout << "#    LDA Benchmark: NewCol vs AR24                            #\n";
-    std::cout << "#    Heart Disease Dataset                                    #\n";
-    std::cout << "#                                                             #\n";
-    std::cout << "###############################################################\n\n";
-
-    std::string dataDir = getDataDir();
-    std::cout << "Data directory: " << dataDir << std::endl;
-
-    // Load dataset
-    std::cout << "\n--- Loading Dataset ---" << std::endl;
-    LDADataset trainSet, testSet;
-    LDADataEncoder::loadOrCreateSplit(
-        dataDir + "/Heart_disease_cleveland.csv",
-        dataDir + "/heart_disease_train.csv",
-        dataDir + "/heart_disease_test.csv",
-        trainSet, testSet, 0.8, 42);
-
-    // Limit training samples
-    if (NUM_SAMPLES > 0) {
-        std::cout << "Limiting training samples to " << NUM_SAMPLES << std::endl;
-        LDADataEncoder::limitSamples(trainSet, NUM_SAMPLES);
-    }
-
-    std::cout << "Training: " << trainSet.numSamples << " samples" << std::endl;
-    std::cout << "Test: " << testSet.numSamples << " samples" << std::endl;
-    std::cout << "Features: " << trainSet.numFeatures << " (padded: " << trainSet.paddedFeatures << ")" << std::endl;
-
-    // Normalize
-    LDADataEncoder::normalizeFeatures(trainSet);
-    LDADataEncoder::normalizeWithParams(testSet, trainSet);
-
-    // Encode data
-    std::cout << "\n--- Encoding Data ---" << std::endl;
-    int largeDim = std::max(trainSet.paddedSamples, trainSet.paddedFeatures);
-    EncodedData encoded = LDADataEncoder::encode(trainSet, largeDim);
-
-    // Setup encryption
-    std::cout << "\n--- Setting up CKKS Encryption ---" << std::endl;
     int maxDim = std::max(trainSet.paddedSamples, trainSet.paddedFeatures);
-    int multDepth = 30;
+    int multDepth = 31;
     uint32_t scalingModSize = 59;
     uint32_t firstModSize = 60;
 
@@ -437,7 +323,7 @@ int main() {
     std::cout << " Done." << std::endl;
 
     std::cout << "Setting up bootstrapping..." << std::flush;
-    std::vector<uint32_t> levelBudget = {4, 4};
+    std::vector<uint32_t> levelBudget = {4, 5};
     std::vector<uint32_t> bsgsDim = {0, 0};
     cc->EvalBootstrapSetup(levelBudget, bsgsDim, HD_PADDED_FEATURE * HD_PADDED_FEATURE);
     cc->EvalBootstrapKeyGen(keyPair.secretKey, HD_PADDED_FEATURE * HD_PADDED_FEATURE);
@@ -445,25 +331,133 @@ int main() {
 
     auto enc = std::make_shared<DebugEncryption>(cc, keyPair);
 
-    // Encrypt data
-    std::cout << "\n--- Encrypting Training Data ---" << std::endl;
+    std::cout << "Encrypting training data..." << std::flush;
     auto classDataEncrypted = encryptClassData(trainSet, encoded, enc);
-    std::cout << "Encrypted " << classDataEncrypted.size() << " class datasets" << std::endl;
+    std::cout << " Done." << std::endl;
 
-    // Run benchmarks
-    auto newcolResult = runBenchmark<LDA_NewCol>(
-        "NewCol", enc, cc, keyPair, rotIndices,
-        classDataEncrypted, trainSet, testSet, multDepth);
+    std::cout << "Running " << algorithmName << " (" << NUM_TRIALS << " trial"
+              << (NUM_TRIALS > 1 ? "s" : "") << ")..." << std::flush;
 
-    auto ar24Result = runBenchmark<LDA_AR24>(
-        "AR24", enc, cc, keyPair, rotIndices,
-        classDataEncrypted, trainSet, testSet, multDepth);
+    double total_time_sw = 0, total_time_inv = 0, total_time_w = 0, total_time_total = 0;
+    BenchmarkResult finalResult;
+    finalResult.algorithm = algorithmName;
+    finalResult.num_trials = NUM_TRIALS;
 
-    // Save results
-    std::string outputFile = "benchmark_results.txt";
-    saveBenchmarkResults(outputFile, newcolResult, ar24Result, NUM_SAMPLES, INVERSION_ITERATIONS);
+    for (int trial = 0; trial < NUM_TRIALS; trial++) {
+#if BENCHMARK_VERBOSE
+        std::cout << "\n  Trial " << (trial + 1) << "/" << NUM_TRIALS << ":" << std::endl;
+#endif
 
-    // Print summary
+        LDAAlgorithm lda(enc, cc, keyPair, rotIndices, multDepth, USE_BOOTSTRAPPING);
+
+        LDATimingResult timings;
+        auto result = lda.trainWithTimings(classDataEncrypted, trainSet,
+                                            INVERSION_ITERATIONS, timings,
+                                            BENCHMARK_VERBOSE, false);
+
+        auto wStart = std::chrono::high_resolution_clock::now();
+
+        size_t f = testSet.numFeatures;
+        size_t f_tilde = testSet.paddedFeatures;
+        std::vector<double> mu_diff(f, 0.0);
+        for (size_t i = 0; i < f; i++) {
+            mu_diff[i] = result.classMeans[1][i] - result.classMeans[0][i];
+        }
+        std::vector<double> w(f, 0.0);
+        for (size_t i = 0; i < f; i++) {
+            for (size_t j = 0; j < f; j++) {
+                w[i] += result.Sw_inv_decrypted[i * f_tilde + j] * mu_diff[j];
+            }
+        }
+
+        auto wEnd = std::chrono::high_resolution_clock::now();
+        double time_w = std::chrono::duration<double>(wEnd - wStart).count();
+
+        finalResult = performInferenceWithMetrics(result, testSet, timings, time_w, algorithmName);
+
+        total_time_sw += timings.swComputation.count();
+        total_time_inv += timings.inversionTime.count();
+        total_time_w += time_w;
+        total_time_total += timings.totalTime.count();
+
+#if BENCHMARK_VERBOSE
+        std::cout << "    Time: " << std::fixed << std::setprecision(1)
+                  << timings.totalTime.count() << "s" << std::endl;
+#endif
+    }
+
+    finalResult.num_trials = NUM_TRIALS;
+    finalResult.time_sw = total_time_sw / NUM_TRIALS;
+    finalResult.time_sw_inv = total_time_inv / NUM_TRIALS;
+    finalResult.time_w = total_time_w / NUM_TRIALS;
+    finalResult.time_total = total_time_total / NUM_TRIALS;
+
+    std::cout << " Done. (avg: " << std::fixed << std::setprecision(1)
+              << finalResult.time_total << "s)" << std::endl;
+
+    // Clear static key stores before returning so next algorithm starts clean
+    CryptoContextImpl<DCRTPoly>::ClearEvalAutomorphismKeys();
+    CryptoContextImpl<DCRTPoly>::ClearEvalMultKeys();
+
+    return finalResult;
+}
+
+// ============ Main ============
+int main() {
+    std::cout << "\n";
+    std::cout << "###############################################################\n";
+    std::cout << "#                                                             #\n";
+    std::cout << "#    LDA Benchmark: NewCol vs AR24                            #\n";
+    std::cout << "#    Heart Disease Dataset                                    #\n";
+    std::cout << "#    (Isolated CryptoContext per algorithm)                   #\n";
+    std::cout << "#                                                             #\n";
+    std::cout << "###############################################################\n\n";
+
+    std::string dataDir = getDataDir();
+    std::cout << "Data directory: " << dataDir << std::endl;
+
+    // Load and encode dataset (plaintext only — no CC needed)
+    std::cout << "\n--- Loading Dataset ---" << std::endl;
+    LDADataset trainSet, testSet;
+    LDADataEncoder::loadOrCreateSplit(
+        dataDir + "/Heart_disease_cleveland.csv",
+        dataDir + "/heart_disease_train.csv",
+        dataDir + "/heart_disease_test.csv",
+        trainSet, testSet, 0.8, 42);
+
+    if (NUM_SAMPLES > 0) {
+        std::cout << "Limiting training samples to " << NUM_SAMPLES << std::endl;
+        LDADataEncoder::limitSamples(trainSet, NUM_SAMPLES);
+    }
+
+    std::cout << "Training: " << trainSet.numSamples << " samples" << std::endl;
+    std::cout << "Test: " << testSet.numSamples << " samples" << std::endl;
+    std::cout << "Features: " << trainSet.numFeatures << " (padded: " << trainSet.paddedFeatures << ")" << std::endl;
+
+    LDADataEncoder::normalizeFeatures(trainSet);
+    LDADataEncoder::normalizeWithParams(testSet, trainSet);
+
+    std::cout << "\n--- Encoding Data ---" << std::endl;
+    int largeDim = std::max(trainSet.paddedSamples, trainSet.paddedFeatures);
+    EncodedData encoded = LDADataEncoder::encode(trainSet, largeDim);
+
+    // Run NewCol with its own isolated CC
+    auto newcolResult = runAlgorithmIsolated<LDA_NewCol>(
+        "NewCol", trainSet, testSet, encoded, largeDim);
+
+    // Cool down between algorithms
+    const int COOLING = 45;
+    std::cout << "\nCooling (" << COOLING << "s)..." << std::endl;
+    std::this_thread::sleep_for(std::chrono::seconds(COOLING));
+
+    // Run AR24 with its own isolated CC
+    auto ar24Result = runAlgorithmIsolated<LDA_AR24>(
+        "AR24", trainSet, testSet, encoded, largeDim);
+
+    // Save and print results
+    std::string outputFile = "lda_results.txt";
+    saveBenchmarkResults(outputFile, newcolResult, ar24Result, NUM_SAMPLES, (int)testSet.numSamples, INVERSION_ITERATIONS);
+
     std::cout << "\n" << std::string(60, '=') << std::endl;
     std::cout << "  BENCHMARK SUMMARY" << std::endl;
     std::cout << std::string(60, '=') << std::endl;
@@ -479,7 +473,7 @@ int main() {
     double speedup = newcolResult.time_total / ar24Result.time_total;
     std::cout << "\nSpeedup (NewCol/AR24): " << std::setprecision(2) << speedup << "x" << std::endl;
 
-    std::cout << "\nResults saved to: " << outputFile << std::endl;
+    std::cout << "Results saved to: " << outputFile << std::endl;
 
     return 0;
 }

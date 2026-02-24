@@ -77,10 +77,10 @@ private:
 
     Ciphertext<DCRTPoly> vecRotsOpt(const std::vector<Ciphertext<DCRTPoly>>& matrixM,
                                     int is, int s, int np, int d) {
-        auto rotsM = getZeroCiphertext(d * d * s);
+        auto rotsM = makeZero(d * d * s);
 
         for (int j = 0; j < s / np; j++) {
-            auto T = getZeroCiphertext(d * d * s);
+            auto T = makeZero(d * d * s);
 
             for (int i = 0; i < np; i++) {
                 auto msk = generateMaskVector(d * d * s, np * j + i, d);
@@ -99,7 +99,7 @@ private:
     Ciphertext<DCRTPoly> eval_mult_NewCol(const Ciphertext<DCRTPoly>& matrixA,
                                           const Ciphertext<DCRTPoly>& matrixB,
                                           int s, int B, int ng, int nb, int np, int d) {
-        auto matrixC = getZeroCiphertext(d * d * s);
+        auto matrixC = makeZero(d * d * s);
         Ciphertext<DCRTPoly> babyStepsOfA[nb];
         std::vector<Ciphertext<DCRTPoly>> babyStepsOfB;
 
@@ -117,11 +117,11 @@ private:
 
         for (int i = 0; i < B; i++) {
             auto batched_rotations_B = vecRotsOpt(babyStepsOfB, i, s, np, d);
-            auto diagA = getZeroCiphertext(d * d * s);
+            auto diagA = makeZero(d * d * s);
 
             for (int k = -ng; k < ng; k++) {
                 if (k < 0) {
-                    auto tmp = getZeroCiphertext(d * d * s);
+                    auto tmp = makeZero(d * d * s);
                     auto babyStep = (k == -ng) ? 1 : 0;
 
                     for (int j = d * d + k * nb + 1 + babyStep; j <= d * d + (k + 1) * nb; j++) {
@@ -134,7 +134,7 @@ private:
                     }
                     m_cc->EvalAddInPlace(diagA, rot.rotate(tmp, k * nb));
                 } else {
-                    auto tmp = getZeroCiphertext(d * d * s);
+                    auto tmp = makeZero(d * d * s);
                     auto babyStep = 0;
 
                     for (int j = k * nb + 1; j <= (k + 1) * nb; j++) {

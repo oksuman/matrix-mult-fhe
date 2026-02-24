@@ -1,10 +1,15 @@
 #!/bin/bash
 
-# LDA (Linear Discriminant Analysis) Benchmark Script
-# Single-thread mode for reproducible results
-export OMP_NUM_THREADS=1
+# ============================================================
+# Hardware Setting (shared across all benchmark scripts)
+# Override: OMP_NUM_THREADS=8 ./run_lda.sh
+# ============================================================
+if [ -z "$OMP_NUM_THREADS" ]; then
+    NCORES=$(sysctl -n hw.physicalcpu 2>/dev/null || nproc --all 2>/dev/null || echo 16)
+    export OMP_NUM_THREADS=$NCORES
+fi
 
-RESULT_FILE="lda_benchmark_results.txt"
+LOG_FILE="lda_console.log"
 
 echo "=============================================="
 echo "  LDA Benchmark"
@@ -23,10 +28,10 @@ fi
 
 cd "$BUILD_DIR"
 
-# Initialize result file
-cat > "$RESULT_FILE" << EOL
+# Initialize log file
+cat > "$LOG_FILE" << EOL
 ==============================================================================
-  LDA Benchmark Results
+  LDA Benchmark Console Log
   Date: $(date)
   OMP_NUM_THREADS: $OMP_NUM_THREADS
 ==============================================================================
@@ -36,6 +41,8 @@ EOL
 run_app() {
     local name=$1
     local exec=$2
+    shift 2
+    local args="$@"
 
     echo "----------------------------------------------"
     echo "Running: $name"
@@ -45,7 +52,7 @@ run_app() {
         echo "Cooling down before $name..."
         sleep 30
 
-        OMP_NUM_THREADS=1 ./$exec 2>&1 | tee -a "$RESULT_FILE"
+        ./$exec $args 2>&1 | tee -a "$LOG_FILE"
 
         echo ""
         echo "Cooling down after $name..."
@@ -55,13 +62,13 @@ run_app() {
     fi
 }
 
-# Run plaintext baseline
-run_app "Plaintext Baseline" "lda_plaintext"
+# Run plaintext baseline (--no-save: no separate txt file)
+run_app "Plaintext Baseline" "lda_plaintext" --no-save
 
 # Run encrypted version
-run_app "Encrypted LDA" "lda_encrypted"
+run_app "Encrypted LDA" "lda_encrypted" --benchmark
 
-# Run benchmark version (multiple runs)
+# Run benchmark version (writes lda_results.txt)
 run_app "Benchmark LDA" "benchmark_lda"
 
 echo ""
@@ -69,4 +76,5 @@ echo "=============================================="
 echo "  LDA Benchmark Complete"
 echo "=============================================="
 echo "End time: $(date)"
-echo "Results saved to: $BUILD_DIR/$RESULT_FILE"
+echo "Console log: $BUILD_DIR/$LOG_FILE"
+echo "Result file: $BUILD_DIR/lda_results.txt"

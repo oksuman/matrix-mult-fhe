@@ -31,7 +31,7 @@ private:
         int B = d / s;
         int num_slots = d * d * s;
 
-        auto matrixC = getZeroCiphertext(num_slots)->Clone();
+        auto matrixC = makeZero(num_slots);
         auto matrixA_copy = matA->Clone();
         auto matrixB_copy = matB->Clone();
         matrixA_copy->SetSlots(num_slots);
@@ -137,38 +137,6 @@ public:
         s = std::max(1, s);
         int num_slots = d * d * s;
 
-        // DEBUG: Check input slots and values
-        if (m_verbose) {
-            std::cout << "  [DEBUG] Input M->GetSlots() = " << M->GetSlots() << std::endl;
-            std::cout << "  [DEBUG] Expected num_slots = " << num_slots << " (d=" << d << ", s=" << s << ")" << std::endl;
-
-            Plaintext ptM;
-            m_cc->Decrypt(m_keyPair.secretKey, M, &ptM);
-            auto mVec = ptM->GetRealPackedValue();
-
-            // Count non-zero values
-            int nonZeroCount = 0;
-            double maxVal = 0, minVal = 0;
-            for (size_t i = 0; i < std::min(mVec.size(), (size_t)num_slots); i++) {
-                if (std::abs(mVec[i]) > 1e-6) nonZeroCount++;
-                maxVal = std::max(maxVal, mVec[i]);
-                minVal = std::min(minVal, mVec[i]);
-            }
-            std::cout << "  [DEBUG] M: nonzero=" << nonZeroCount << "/" << num_slots
-                      << ", range=[" << minVal << ", " << maxVal << "]" << std::endl;
-
-            // Check values in different slot ranges
-            std::cout << "  [DEBUG] M slots 0-255 (first d*d): ";
-            for (int i = 0; i < 5; i++) std::cout << mVec[i*d+i] << " ";
-            std::cout << "..." << std::endl;
-
-            if (num_slots > d*d) {
-                std::cout << "  [DEBUG] M slots 256-511 (second d*d): ";
-                for (int i = 0; i < 5; i++) std::cout << mVec[d*d + i*d+i] << " ";
-                std::cout << "..." << std::endl;
-            }
-        }
-
         // Identity for initial computation (d*d slots, matches trace/alpha)
         // 1s only at actual feature positions (0..actualDim-1), 0s at padding (actualDim..d-1)
         std::vector<double> vI(d * d, 0.0);
@@ -230,18 +198,6 @@ public:
         if (m_verbose) {
             std::cout << "  [Inversion Init] Y level: " << Y->GetLevel()
                       << ", A_bar level: " << A_bar->GetLevel() << std::endl;
-            // Print Y and A_bar diagonal values before SetSlots
-            Plaintext ptY, ptA;
-            m_cc->Decrypt(m_keyPair.secretKey, Y, &ptY);
-            m_cc->Decrypt(m_keyPair.secretKey, A_bar, &ptA);
-            auto yVec = ptY->GetRealPackedValue();
-            auto aVec = ptA->GetRealPackedValue();
-            std::cout << "  [Init] Y diagonal (0-12): ";
-            for (int i = 0; i < actualDim && i < 5; i++) std::cout << yVec[i*d+i] << " ";
-            std::cout << "..." << std::endl;
-            std::cout << "  [Init] A_bar diagonal (0-12): ";
-            for (int i = 0; i < actualDim && i < 5; i++) std::cout << aVec[i*d+i] << " ";
-            std::cout << "..." << std::endl;
         }
 
         Y->SetSlots(num_slots);
@@ -249,129 +205,31 @@ public:
         Y = clean(Y, d, s);
         A_bar = clean(A_bar, d, s);
 
-        // DEBUG: Check after initial SetSlots + clean
-        if (m_verbose) {
-            std::cout << "  [DEBUG] After SetSlots(" << num_slots << ") + clean:" << std::endl;
-            std::cout << "    Y->GetSlots()=" << Y->GetSlots() << ", A_bar->GetSlots()=" << A_bar->GetSlots() << std::endl;
-
-            Plaintext ptY, ptA;
-            m_cc->Decrypt(m_keyPair.secretKey, Y, &ptY);
-            m_cc->Decrypt(m_keyPair.secretKey, A_bar, &ptA);
-            auto yVec = ptY->GetRealPackedValue();
-            auto aVec = ptA->GetRealPackedValue();
-
-            // Check all slots
-            int yNonZero = 0, aNonZero = 0;
-            for (size_t j = 0; j < std::min(yVec.size(), (size_t)num_slots); j++) {
-                if (std::abs(yVec[j]) > 1e-9) yNonZero++;
-                if (std::abs(aVec[j]) > 1e-9) aNonZero++;
-            }
-            std::cout << "    Y nonzero slots: " << yNonZero << "/" << num_slots << std::endl;
-            std::cout << "    A_bar nonzero slots: " << aNonZero << "/" << num_slots << std::endl;
-
-            // Check slots 256-511 (should be 0 after clean)
-            double yMax256 = 0, aMax256 = 0;
-            for (int j = d*d; j < std::min(2*d*d, num_slots); j++) {
-                yMax256 = std::max(yMax256, std::abs(yVec[j]));
-                aMax256 = std::max(aMax256, std::abs(aVec[j]));
-            }
-            std::cout << "    Slots 256-511 max: Y=" << yMax256 << ", A_bar=" << aMax256 << std::endl;
-        }
-
         for (int i = 0; i < iterations - 1; i++) {
-            // AR24 matrix multiplication (FIRST, like src)
             Y = eval_mult_AR24(Y, m_cc->EvalAdd(pI_mult, A_bar), d, s);
             A_bar = eval_mult_AR24(A_bar, A_bar, d, s);
 
-            // Check level and bootstrap/clean AFTER multiplication (like src)
-            // DEBUG: Force bootstrap at iteration 3 to test bootstrap behavior
-            bool forceBootstrap = (i == 3);
-            if (m_useBootstrapping && (forceBootstrap || (int)Y->GetLevel() >= m_multDepth - 3)) {
-                // BEFORE bootstrap
+            if (m_useBootstrapping && (int)Y->GetLevel() >= m_multDepth - 3) {
                 if (m_verbose) {
-                    Plaintext ptY_pre, ptA_pre;
-                    m_cc->Decrypt(m_keyPair.secretKey, Y, &ptY_pre);
-                    m_cc->Decrypt(m_keyPair.secretKey, A_bar, &ptA_pre);
-                    auto yPre = ptY_pre->GetRealPackedValue();
-                    auto aPre = ptA_pre->GetRealPackedValue();
-                    std::cout << "  [Iter " << i << "] BEFORE bootstrap (level=" << Y->GetLevel() << "):" << std::endl;
-                    std::cout << "    Y[0,0]=" << yPre[0] << " Y[1,1]=" << yPre[d+1] << " Y[2,2]=" << yPre[2*d+2] << std::endl;
-                    std::cout << "    A[0,0]=" << aPre[0] << " A[1,1]=" << aPre[d+1] << " A[2,2]=" << aPre[2*d+2] << std::endl;
+                    std::cout << "  [Iter " << i << "] Bootstrapping triggered. Y level: "
+                              << Y->GetLevel() << std::endl;
                 }
-
                 A_bar->SetSlots(d * d);
                 A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
                 Y->SetSlots(d * d);
                 Y = m_cc->EvalBootstrap(Y, 2, 18);
-
-                // AFTER bootstrap, BEFORE clean
-                if (m_verbose) {
-                    Plaintext ptY_post, ptA_post;
-                    m_cc->Decrypt(m_keyPair.secretKey, Y, &ptY_post);
-                    m_cc->Decrypt(m_keyPair.secretKey, A_bar, &ptA_post);
-                    auto yPost = ptY_post->GetRealPackedValue();
-                    auto aPost = ptA_post->GetRealPackedValue();
-                    std::cout << "  [Iter " << i << "] AFTER bootstrap (level=" << Y->GetLevel() << "):" << std::endl;
-                    std::cout << "    Y[0,0]=" << yPost[0] << " Y[1,1]=" << yPost[d+1] << " Y[2,2]=" << yPost[2*d+2] << std::endl;
-                    std::cout << "    A[0,0]=" << aPost[0] << " A[1,1]=" << aPost[d+1] << " A[2,2]=" << aPost[2*d+2] << std::endl;
-                }
-
                 A_bar->SetSlots(d * d * s);
                 A_bar = clean(A_bar, d, s);
                 Y->SetSlots(d * d * s);
                 Y = clean(Y, d, s);
-
-                // AFTER clean
                 if (m_verbose) {
-                    Plaintext ptY_clean, ptA_clean;
-                    m_cc->Decrypt(m_keyPair.secretKey, Y, &ptY_clean);
-                    m_cc->Decrypt(m_keyPair.secretKey, A_bar, &ptA_clean);
-                    auto yClean = ptY_clean->GetRealPackedValue();
-                    auto aClean = ptA_clean->GetRealPackedValue();
-                    std::cout << "  [Iter " << i << "] AFTER clean (level=" << Y->GetLevel() << "):" << std::endl;
-                    std::cout << "    Y[0,0]=" << yClean[0] << " Y[1,1]=" << yClean[d+1] << " Y[2,2]=" << yClean[2*d+2] << std::endl;
-                    std::cout << "    A[0,0]=" << aClean[0] << " A[1,1]=" << aClean[d+1] << " A[2,2]=" << aClean[2*d+2] << std::endl;
+                    std::cout << "           After bootstrap. Y level: " << Y->GetLevel() << std::endl;
                 }
             } else {
-                // Must restore slot count before clean (eval_mult_AR24 sets to d*d)
                 A_bar->SetSlots(num_slots);
                 A_bar = clean(A_bar, d, s);
                 Y->SetSlots(num_slots);
                 Y = clean(Y, d, s);
-            }
-
-            if (m_verbose && i < 3) {
-                // Debug: print Y and A_bar diagonal after iteration
-                Plaintext ptY, ptA;
-                m_cc->Decrypt(m_keyPair.secretKey, Y, &ptY);
-                m_cc->Decrypt(m_keyPair.secretKey, A_bar, &ptA);
-                auto yVec = ptY->GetRealPackedValue();
-                auto aVec = ptA->GetRealPackedValue();
-                std::cout << "  [Iter " << i << "] Y diag: ";
-                for (int j = 0; j < 5; j++) std::cout << std::setprecision(6) << yVec[j*d+j] << " ";
-                std::cout << std::endl;
-                std::cout << "  [Iter " << i << "] A_bar diag: ";
-                for (int j = 0; j < 5; j++) std::cout << std::setprecision(6) << aVec[j*d+j] << " ";
-                std::cout << std::endl;
-
-                // Check all slots after first iteration
-                if (i == 0) {
-                    int yNonZero = 0, aNonZero = 0;
-                    for (size_t j = 0; j < std::min(yVec.size(), (size_t)num_slots); j++) {
-                        if (std::abs(yVec[j]) > 1e-9) yNonZero++;
-                        if (std::abs(aVec[j]) > 1e-9) aNonZero++;
-                    }
-                    std::cout << "  [Iter 0] Full check: Y nonzero=" << yNonZero << ", A_bar nonzero=" << aNonZero << std::endl;
-                    std::cout << "  [Iter 0] Y->GetSlots()=" << Y->GetSlots() << ", A_bar->GetSlots()=" << A_bar->GetSlots() << std::endl;
-
-                    // Check slots 256-511
-                    double yMax256 = 0, aMax256 = 0;
-                    for (int j = d*d; j < std::min(2*d*d, num_slots); j++) {
-                        yMax256 = std::max(yMax256, std::abs(yVec[j]));
-                        aMax256 = std::max(aMax256, std::abs(aVec[j]));
-                    }
-                    std::cout << "  [Iter 0] Slots 256-511 max: Y=" << yMax256 << ", A_bar=" << aMax256 << std::endl;
-                }
             }
 
             if (m_verbose && (i % 5 == 0 || i == iterations - 2)) {

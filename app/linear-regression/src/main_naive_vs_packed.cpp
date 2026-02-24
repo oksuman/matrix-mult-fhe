@@ -14,7 +14,9 @@
 #include <openfhe.h>
 #include <iostream>
 #include <iomanip>
+#include <fstream>
 #include <chrono>
+#include <ctime>
 #include <string>
 #include <vector>
 
@@ -152,7 +154,7 @@ AlgorithmResult runPacked(const std::string& algorithmName,
     std::cout << std::string(64, '=') << std::endl;
 
     // Setup CKKS context
-    int multDepth = 30;
+    int multDepth = 31;
     uint32_t scaleModSize = 59;
     uint32_t firstModSize = 60;
 
@@ -184,7 +186,7 @@ AlgorithmResult runPacked(const std::string& algorithmName,
     std::cout << " Done." << std::endl;
 
     std::cout << "  Setting up bootstrapping..." << std::flush;
-    std::vector<uint32_t> levelBudget = {4, 4};
+    std::vector<uint32_t> levelBudget = {4, 5};
     std::vector<uint32_t> bsgsDim = {0, 0};
     cc->EvalBootstrapSetup(levelBudget, bsgsDim, FEATURE_DIM * FEATURE_DIM);
     cc->EvalBootstrapKeyGen(keyPair.secretKey, FEATURE_DIM * FEATURE_DIM);
@@ -264,6 +266,134 @@ AlgorithmResult runPacked(const std::string& algorithmName,
     return result;
 }
 
+void saveLRResults(const std::string& filename, const std::vector<AlgorithmResult>& results) {
+    std::ofstream file(filename);
+    if (!file.is_open()) {
+        std::cerr << "Failed to open: " << filename << std::endl;
+        return;
+    }
+
+    auto now = std::chrono::system_clock::now();
+    auto time = std::chrono::system_clock::to_time_t(now);
+
+    file << "================================================================\n";
+    file << "  LR Benchmark Results\n";
+    file << "  Generated: " << std::ctime(&time);
+    file << "================================================================\n\n";
+
+    file << "--- Configuration ---\n";
+    file << "Training samples: " << LinearRegression_Naive::N << "\n";
+    file << "Test samples:     " << LinearRegression_Naive::N << "\n";
+    file << "Features:         " << LinearRegression_Naive::D << "\n";
+    file << "Trials:           1\n\n";
+
+    file << std::fixed << std::setprecision(2);
+
+    file << "================================================================\n";
+    file << "  TIMING COMPARISON (seconds)\n";
+    file << "================================================================\n\n";
+
+    file << std::left << std::setw(12) << "Step";
+    for (const auto& r : results) {
+        if (r.valid) file << std::right << std::setw(14) << r.name;
+    }
+    file << "\n" << std::string(70, '-') << "\n";
+
+    file << std::left << std::setw(12) << "Step 1";
+    for (const auto& r : results) {
+        if (r.valid) file << std::right << std::setw(14) << r.step1.count();
+    }
+    file << "\n";
+
+    file << std::left << std::setw(12) << "Step 2";
+    for (const auto& r : results) {
+        if (r.valid) file << std::right << std::setw(14) << r.step2.count();
+    }
+    file << "\n";
+
+    file << std::left << std::setw(12) << "Step 3";
+    for (const auto& r : results) {
+        if (r.valid) file << std::right << std::setw(14) << r.step3.count();
+    }
+    file << "\n" << std::string(70, '-') << "\n";
+
+    file << std::left << std::setw(12) << "Total";
+    for (const auto& r : results) {
+        if (r.valid) file << std::right << std::setw(14) << r.total.count();
+    }
+    file << "\n\n";
+
+    file << "  Step 1: Precomputation (X^T*X and X^T*y)\n";
+    file << "  Step 2: Matrix Inversion\n";
+    file << "  Step 3: Weight Computation\n\n";
+
+    file << "================================================================\n";
+    file << "  ACCURACY (MSE)\n";
+    file << "================================================================\n\n";
+
+    file << std::left << std::setw(12) << "Algorithm" << std::right << std::setw(12) << "MSE" << "\n";
+    file << std::string(24, '-') << "\n";
+    for (const auto& r : results) {
+        if (!r.valid) continue;
+        file << std::left << std::setw(12) << r.name
+             << std::right << std::setw(12) << std::setprecision(6) << r.regResult.mse << "\n";
+    }
+    file << "\n";
+
+    file << "================================================================\n";
+    file << "  COMMUNICATION COST (Serialized Sizes)\n";
+    file << "================================================================\n\n";
+
+    file << std::left  << std::setw(12) << "Algorithm"
+         << std::right << std::setw(10) << "CT(MB)"
+         << std::setw(10) << "CT Count"
+         << std::setw(14) << "EvalKeys(MB)"
+         << std::setw(14) << "RelinKey(MB)"
+         << std::setw(12) << "Total(MB)" << "\n";
+    file << std::string(72, '-') << "\n";
+
+    for (const auto& r : results) {
+        if (!r.valid) continue;
+        double totalMB = r.mem.ciphertextSizeMB * r.ctCount
+                       + r.mem.rotationKeysSizeMB
+                       + r.mem.relinKeySizeMB;
+        file << std::left  << std::setw(12) << r.name
+             << std::right << std::setprecision(2)
+             << std::setw(10) << r.mem.ciphertextSizeMB
+             << std::setw(10) << r.ctCount
+             << std::setw(14) << r.mem.rotationKeysSizeMB
+             << std::setw(14) << r.mem.relinKeySizeMB
+             << std::setw(12) << totalMB << "\n";
+    }
+    file << "\n";
+
+    file << "================================================================\n";
+    file << "  MEMORY USAGE\n";
+    file << "================================================================\n\n";
+
+    file << std::left  << std::setw(12) << "Algorithm"
+         << std::right << std::setw(14) << "Setup OH(GB)"
+         << std::setw(16) << "Runtime OH(GB)"
+         << std::setw(12) << "Peak(GB)" << "\n";
+    file << std::string(54, '-') << "\n";
+
+    for (const auto& r : results) {
+        if (!r.valid) continue;
+        file << std::left  << std::setw(12) << r.name
+             << std::right << std::setprecision(4)
+             << std::setw(14) << r.mem.setupOverheadGB()
+             << std::setw(16) << r.mem.computeOverheadGB()
+             << std::setw(12) << r.mem.peakMemoryGB << "\n";
+    }
+
+    file << "\n================================================================\n";
+    file << "  END OF REPORT\n";
+    file << "================================================================\n";
+
+    file.close();
+    std::cout << "\nResults saved to: " << filename << std::endl;
+}
+
 void printComparisonTable(const std::vector<AlgorithmResult>& results) {
     std::cout << "\n";
     std::cout << "================================================================" << std::endl;
@@ -288,7 +418,7 @@ void printComparisonTable(const std::vector<AlgorithmResult>& results) {
         bool isNaive = (r.name == "Naive");
         std::cout << std::left << std::setw(12) << r.name
                   << std::right << std::setw(11)
-                  << (isNaive ? LinearRegression_Naive::MULT_DEPTH : 30)
+                  << (isNaive ? LinearRegression_Naive::MULT_DEPTH : 31)
                   << std::setw(11) << (isNaive ? 1 : SAMPLE_DIM * SAMPLE_DIM)
                   << std::setw(5) << (isNaive ? LinearRegression_Naive::D : FEATURE_DIM)
                   << std::setw(5) << (isNaive ? LinearRegression_Naive::INV_ITER : 18)
@@ -405,7 +535,6 @@ void printComparisonTable(const std::vector<AlgorithmResult>& results) {
 
 int main(int argc, char* argv[]) {
     #ifdef _OPENMP
-    omp_set_num_threads(1);
     #endif
 
     bool verbose = true;
@@ -454,8 +583,14 @@ int main(int argc, char* argv[]) {
 
     // Run AR24
     if (runAR24Flag) {
+        // Clear any previously registered mult keys (e.g. from Naive) so that
+        // AR24's relin key is measured in isolation from the global store.
+        CryptoContextImpl<DCRTPoly>::ClearEvalMultKeys();
         results.push_back(runPacked<LinearRegression_AR24>(
             "AR24", trainFile, testFile, idleMemGB, verbose));
+        // Clear static eval key stores so NewCol measurement is isolated
+        CryptoContextImpl<DCRTPoly>::ClearEvalAutomorphismKeys();
+        CryptoContextImpl<DCRTPoly>::ClearEvalMultKeys();
     }
 
     // Run NewCol
@@ -469,6 +604,7 @@ int main(int argc, char* argv[]) {
     for (auto& r : results) if (r.valid) validCount++;
     if (validCount > 0) {
         printComparisonTable(results);
+        saveLRResults("lr_results.txt", results);
     }
 
     std::cout << "\n" << std::string(64, '=') << std::endl;

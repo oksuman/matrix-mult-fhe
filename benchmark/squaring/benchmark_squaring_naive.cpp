@@ -43,7 +43,7 @@ void runSquaringBenchmark(int numRuns = 1) {
     auto matOp = std::make_unique<MatrixOperations<d>>(enc, cc, keyPair.publicKey);
 
     // Print header with parameters
-    printSquaringBenchmarkHeader("Naive", d, numRuns, multDepth, Scaling, cc->GetRingDimension());
+    printSquaringBenchmarkHeader("Naive", d, numRuns, multDepth, Scaling, cc->GetRingDimension(), 1);
     std::cout << "  Ciphertexts: " << d * d << " (d^2)" << std::endl;
     std::cout << "  Rotation keys: None" << std::endl;
 
@@ -165,7 +165,6 @@ int main(int argc, char* argv[]) {
     std::cout << "Idle Memory: " << std::fixed << std::setprecision(4) << g_idleMemoryGB << " GB" << std::endl;
 
     #ifdef _OPENMP
-    omp_set_num_threads(1);
     std::cout << "OpenMP Threads: " << omp_get_max_threads() << std::endl;
     #else
     std::cout << "OpenMP: Not enabled (single thread)" << std::endl;

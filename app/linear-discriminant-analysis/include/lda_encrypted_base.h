@@ -9,6 +9,7 @@
 #include <tuple>
 #include <iostream>
 #include <iomanip>
+#include <map>
 #include <set>
 
 // HD Dataset constants
@@ -106,6 +107,16 @@ protected:
         std::vector<double> zeroVec(batchSize, 0.0);
         auto zeroPtx = m_cc->MakeCKKSPackedPlaintext(zeroVec, 1, 0, nullptr, batchSize);
         return m_cc->Encrypt(zeroPtx, m_keyPair.publicKey);
+    }
+
+    // Cached zero ciphertext: encrypts once per batchSize, then clones
+    mutable std::map<int, Ciphertext<DCRTPoly>> m_zeroCache;
+    Ciphertext<DCRTPoly> makeZero(int batchSize) {
+        auto it = m_zeroCache.find(batchSize);
+        if (it == m_zeroCache.end()) {
+            m_zeroCache[batchSize] = getZeroCiphertext(batchSize);
+        }
+        return m_zeroCache.at(batchSize)->Clone();
     }
 
     // ============ Transpose Mask Generation ============

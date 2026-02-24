@@ -1,5 +1,6 @@
-// Matrix Inversion Benchmark - JKLS18 Algorithm
-// Measures: Time (seconds) and Accuracy (Frobenius norm, log2 error)
+// Matrix Inversion Benchmark - AR24 Algorithm (Simple: upperbound scaling)
+// trace/eval_scalar_inverse 없이 1/d^2 upperbound 로 직접 scaling.
+// eval_transpose_scaled 로 transpose+scaling 을 한 번에 처리.
 
 #include "matrix_inversion_algo.h"
 #include "matrix_utils.h"
@@ -15,14 +16,13 @@ using namespace BenchmarkConfig;
 
 template <int d>
 void runInversionBenchmark(int numRuns = 1) {
-    int scalarInvIter = getScalarInvIterations(d);
-    std::cout << "\n========== JKLS18 Inversion d=" << d << " (scalar_iter=" << scalarInvIter << ") ==========" << std::endl;
+    std::cout << "\n========== AR24-Simple Inversion d=" << d << " ==========" << std::endl;
 
     int r = getInversionIterations(d);
-    int multDepth = MULT_DEPTH;
+    int multDepth = MULT_DEPTH_SIMPLE;
     uint32_t scaleModSize = 59;
     uint32_t firstModSize = 60;
-    std::vector<uint32_t> levelBudget = {4, 5};
+    std::vector<uint32_t> levelBudget = {4, 4};
     std::vector<uint32_t> bsgsDim = {0, 0};
 
     CCParams<CryptoContextCKKSRNS> parameters;
@@ -30,7 +30,9 @@ void runInversionBenchmark(int numRuns = 1) {
     parameters.SetScalingModSize(scaleModSize);
     parameters.SetFirstModSize(firstModSize);
 
-    int batchSize = d * d;
+    int max_batch = 1 << 16;
+    int s = std::min(max_batch / d / d, d);
+    int batchSize = d * d * s;
     parameters.SetBatchSize(batchSize);
     parameters.SetSecurityLevel(HEStd_128_classic);
 
@@ -42,11 +44,11 @@ void runInversionBenchmark(int numRuns = 1) {
     cc->Enable(FHE);
 
     auto keyPair = cc->KeyGen();
-    cc->EvalBootstrapSetup(levelBudget, bsgsDim, batchSize);
-    cc->EvalBootstrapKeyGen(keyPair.secretKey, batchSize);
+    cc->EvalBootstrapSetup(levelBudget, bsgsDim, d * d);
+    cc->EvalBootstrapKeyGen(keyPair.secretKey, d * d);
 
     std::vector<int> rotations;
-    for (int i = 1; i < batchSize; i *= 2) {
+    for (int i = 1; i < d * d * s; i *= 2) {
         rotations.push_back(i);
         rotations.push_back(-i);
     }
@@ -54,23 +56,23 @@ void runInversionBenchmark(int numRuns = 1) {
     cc->EvalMultKeyGen(keyPair.secretKey);
 
     auto enc = std::make_shared<Encryption>(cc, keyPair.publicKey);
-    auto matInv = std::make_unique<MatrixInverse_JKLS18<d>>(
-        enc, cc, keyPair.publicKey, rotations, r, multDepth, scalarInvIter);
+    auto matInv = std::make_unique<MatrixInverse_AR24<d>>(
+        enc, cc, keyPair.publicKey, rotations, r, multDepth);
 
     std::cout << "--- CKKS Parameters ---" << std::endl;
     std::cout << "  multDepth:     " << multDepth << std::endl;
     std::cout << "  scaleModSize:  " << scaleModSize << " bits" << std::endl;
     std::cout << "  firstModSize:  " << firstModSize << " bits" << std::endl;
-    std::cout << "  batchSize:     " << batchSize << " (d^2 = " << d << "^2)" << std::endl;
+    std::cout << "  batchSize:     " << batchSize << " (d^2*s = " << d << "^2*" << s << ")" << std::endl;
     std::cout << "  ringDimension: " << cc->GetRingDimension() << std::endl;
     std::cout << "  security:      HEStd_128_classic" << std::endl;
     std::cout << "--- Bootstrapping ---" << std::endl;
     std::cout << "  levelBudget:   {" << levelBudget[0] << ", " << levelBudget[1] << "}" << std::endl;
     std::cout << "  bsgsDim:       {" << bsgsDim[0] << ", " << bsgsDim[1] << "}" << std::endl;
-    std::cout << "  bootBatchSize: " << batchSize << " (d^2)" << std::endl;
+    std::cout << "  bootBatchSize: " << d * d << " (d^2)" << std::endl;
     std::cout << "--- Algorithm ---" << std::endl;
     std::cout << "  invIter:       " << r << std::endl;
-    std::cout << "  scalarInvIter: " << scalarInvIter << std::endl;
+    std::cout << "  scale:         1/" << d * d << " (no trace/eval_scalar_inverse)" << std::endl;
     std::cout << "  trials:        " << numRuns << std::endl;
     std::cout << "  seed:          1000+run" << std::endl;
 
@@ -79,21 +81,19 @@ void runInversionBenchmark(int numRuns = 1) {
     std::vector<double> times;
 
     for (int run = 0; run < numRuns; run++) {
-        // Generate random invertible matrix with different seed per run
         std::vector<double> matrix(d * d);
-        std::mt19937 gen(1000 + run);  // Different seed per trial
+        std::mt19937 gen(1000 + run);
         std::uniform_real_distribution<double> dis(-1.0, 1.0);
         do {
-            for (int i = 0; i < d * d; i++) {
-                matrix[i] = dis(gen);
-            }
+            for (int i = 0; i < d * d; i++) matrix[i] = dis(gen);
         } while (!utils::isInvertible(matrix, d));
 
         auto groundTruth = computeGroundTruthInverse(matrix, d);
-        auto enc_matrix = enc->encryptInput(matrix);
+        auto pt_matrix = cc->MakeCKKSPackedPlaintext(matrix, 1, 0, nullptr, d * d);
+        auto enc_matrix = cc->Encrypt(keyPair.publicKey, pt_matrix);
 
         auto start = std::chrono::high_resolution_clock::now();
-        auto result = matInv->eval_inverse(enc_matrix);
+        auto result = matInv->eval_inverse_simple(enc_matrix);
         auto end = std::chrono::high_resolution_clock::now();
 
         double duration = std::chrono::duration<double>(end - start).count();
@@ -144,7 +144,8 @@ int main(int argc, char* argv[]) {
     if (argc > 1) numRuns = std::atoi(argv[1]);
 
     std::cout << "============================================" << std::endl;
-    std::cout << "  Matrix Inversion Benchmark - JKLS18" << std::endl;
+    std::cout << "  Matrix Inversion Benchmark - AR24-Simple" << std::endl;
+    std::cout << "  (upperbound scaling, no trace)" << std::endl;
     std::cout << "============================================" << std::endl;
     std::cout << "Runs per dimension: " << numRuns << std::endl;
 

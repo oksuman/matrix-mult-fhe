@@ -23,7 +23,7 @@ void runInversionBenchmark(int numRuns = 1) {
     int multDepth = MULT_DEPTH;
     uint32_t scaleModSize = 59;
     uint32_t firstModSize = 60;
-    std::vector<uint32_t> levelBudget = {4, 4};
+    std::vector<uint32_t> levelBudget = {4, 5};
     std::vector<uint32_t> bsgsDim = {0, 0};
 
     CCParams<CryptoContextCKKSRNS> parameters;
@@ -61,10 +61,22 @@ void runInversionBenchmark(int numRuns = 1) {
     auto matInv = std::make_unique<MatrixInverse_newCol<d>>(
         enc, cc, keyPair.publicKey, rotations, r, multDepth, scalarInvIter);
 
-    std::cout << "Ring Dimension: " << cc->GetRingDimension() << std::endl;
-    std::cout << "Iterations: " << r << std::endl;
-    std::cout << "Mult Depth: " << multDepth << std::endl;
-    std::cout << "Scalar Inv Iter: " << scalarInvIter << std::endl;
+    std::cout << "--- CKKS Parameters ---" << std::endl;
+    std::cout << "  multDepth:     " << multDepth << std::endl;
+    std::cout << "  scaleModSize:  " << scaleModSize << " bits" << std::endl;
+    std::cout << "  firstModSize:  " << firstModSize << " bits" << std::endl;
+    std::cout << "  batchSize:     " << batchSize << " (d^2 = " << d << "^2)" << std::endl;
+    std::cout << "  ringDimension: " << cc->GetRingDimension() << std::endl;
+    std::cout << "  security:      HEStd_128_classic" << std::endl;
+    std::cout << "--- Bootstrapping ---" << std::endl;
+    std::cout << "  levelBudget:   {" << levelBudget[0] << ", " << levelBudget[1] << "}" << std::endl;
+    std::cout << "  bsgsDim:       {" << bsgsDim[0] << ", " << bsgsDim[1] << "}" << std::endl;
+    std::cout << "  bootBatchSize: " << batchSize << " (d^2)" << std::endl;
+    std::cout << "--- Algorithm ---" << std::endl;
+    std::cout << "  invIter:       " << r << std::endl;
+    std::cout << "  scalarInvIter: " << scalarInvIter << std::endl;
+    std::cout << "  trials:        " << numRuns << std::endl;
+    std::cout << "  seed:          1000+run" << std::endl;
 
     double totalTime = 0.0;
     ErrorMetrics avgError;
@@ -152,7 +164,6 @@ int main(int argc, char* argv[]) {
     std::cout << "Runs per dimension: " << numRuns << std::endl;
 
     #ifdef _OPENMP
-    omp_set_num_threads(1);
     std::cout << "OpenMP Threads: " << omp_get_max_threads() << std::endl;
     #else
     std::cout << "OpenMP: Not enabled (single thread)" << std::endl;

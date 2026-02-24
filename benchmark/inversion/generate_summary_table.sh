@@ -1,144 +1,252 @@
 #!/bin/zsh
 
-# Parse inversion benchmark results and generate summary tables
+# Parse inversion benchmark console log and generate a single clean results file.
+# All parameters are read dynamically from the log - no hardcoded values.
 
-INPUT_FILE="inversion_benchmark_results.txt"
-TIME_TABLE="inversion_summary_time.txt"
-ACCURACY_TABLE="inversion_summary_accuracy.txt"
+INPUT_FILE="inversion_console.log"
+OUTPUT_FILE="inversion_results.txt"
 
-if [ ! -f "$INPUT_FILE" ]; then
-    echo "Error: $INPUT_FILE not found"
+if [[ ! -f "$INPUT_FILE" ]]; then
+    echo "Error: $INPUT_FILE not found" >&2
     exit 1
 fi
 
-# Use typeset -A for zsh associative arrays
-typeset -A times
-typeset -A log2_frob
-typeset -A log2_max
+# ============================================================
+# Associative arrays for parsed data
+# ============================================================
+typeset -A p_multDepth p_batchSize p_ringDim p_levelBudget p_invIter
+typeset -A p_trials p_scaleModSize p_firstModSize p_seed
+typeset -A times log2_frob log2_max
+typeset -a seen_algos seen_dims
+typeset -A algo_set dim_set
 
-# Parse the results file
 current_algo=""
 current_dim=""
+current_section=""
 
 while IFS= read -r line; do
-    # Detect algorithm from header
-    if [[ $line =~ "Matrix Inversion Benchmark - "([A-Za-z0-9]+) ]]; then
-        current_algo="${match[1]}"
-    fi
-
-    # Detect dimension from summary header
-    if [[ $line =~ "========== "([A-Za-z0-9]+)" Inversion d="([0-9]+) ]]; then
+    # Detect algorithm + dimension header
+    if [[ $line =~ '========== ([A-Za-z0-9-]+) Inversion d=([0-9]+)' ]]; then
         current_algo="${match[1]}"
         current_dim="${match[2]}"
+        if [[ -z "${algo_set[$current_algo]}" ]]; then
+            seen_algos+=("$current_algo")
+            algo_set[$current_algo]=1
+        fi
+        if [[ -z "${dim_set[$current_dim]}" ]]; then
+            seen_dims+=("$current_dim")
+            dim_set[$current_dim]=1
+        fi
+        current_section=""
+        continue
     fi
 
-    # Parse time from summary
-    if [[ $line =~ "Time: "([0-9.]+)"s" ]]; then
-        times[${current_algo}_${current_dim}]="${match[1]}"
-    fi
+    # Detect section headers
+    if [[ $line == *"--- CKKS Parameters ---"* ]]; then current_section="ckks"; continue; fi
+    if [[ $line == *"--- Bootstrapping ---"*   ]]; then current_section="boot"; continue; fi
+    if [[ $line == *"--- Algorithm ---"*        ]]; then current_section="algo"; continue; fi
+    if [[ $line =~ '--- Summary \(d=[0-9]+\) ---' ]]; then current_section="sum"; continue; fi
 
-    # Parse log2 Frobenius error
-    if [[ $line =~ "log2\(Rel\. Frob\.\):"[[:space:]]*(-?[0-9.]+) ]]; then
-        log2_frob[${current_algo}_${current_dim}]="${match[1]}"
-    fi
+    [[ -z "$current_algo" || -z "$current_dim" ]] && continue
+    k="${current_algo}_${current_dim}"
 
-    # Parse log2 Max error
-    if [[ $line =~ "log2\(Rel\. Max\):"[[:space:]]*(-?[0-9.]+) ]]; then
-        log2_max[${current_algo}_${current_dim}]="${match[1]}"
-    fi
-
+    case "$current_section" in
+        ckks)
+            if   [[ $line =~ 'multDepth:[[:space:]]+([0-9]+)'    ]]; then p_multDepth[$k]="${match[1]}"
+            elif [[ $line =~ 'scaleModSize:[[:space:]]+([0-9]+)' ]]; then p_scaleModSize[$k]="${match[1]}"
+            elif [[ $line =~ 'firstModSize:[[:space:]]+([0-9]+)' ]]; then p_firstModSize[$k]="${match[1]}"
+            elif [[ $line =~ 'batchSize:[[:space:]]+([0-9]+)'    ]]; then p_batchSize[$k]="${match[1]}"
+            elif [[ $line =~ 'ringDimension:[[:space:]]+([0-9]+)']]; then p_ringDim[$k]="${match[1]}"
+            fi
+            ;;
+        boot)
+            if [[ $line =~ 'levelBudget:[[:space:]]+\{([0-9, ]+)\}' ]]; then
+                p_levelBudget[$k]="${${match[1]}// /}"
+            fi
+            ;;
+        algo)
+            if   [[ $line =~ 'invIter:[[:space:]]+([0-9]+)' ]]; then p_invIter[$k]="${match[1]}"
+            elif [[ $line =~ 'trials:[[:space:]]+([0-9]+)'  ]]; then p_trials[$k]="${match[1]}"
+            elif [[ $line =~ 'seed:[[:space:]]+(.+)'        ]]; then p_seed[$k]="${match[1]}"
+            fi
+            ;;
+        sum)
+            if   [[ $line =~ 'Time: ([0-9.]+)s'                             ]]; then times[$k]="${match[1]}"
+            elif [[ $line =~ 'log2\(Rel\. Frob\.\):[[:space:]]*(-?[0-9.]+)' ]]; then log2_frob[$k]="${match[1]}"
+            elif [[ $line =~ 'log2\(Rel\. Max\):[[:space:]]*(-?[0-9.]+)'    ]]; then log2_max[$k]="${match[1]}"
+            fi
+            ;;
+    esac
 done < "$INPUT_FILE"
 
-# Algorithm and dimension lists
-ALGORITHMS=(Naive NewCol AR24 JKLS18 RT22)
-DIMENSIONS=(4 8 16 32 64)
+if [[ ${#seen_algos[@]} -eq 0 ]]; then
+    echo "Error: no benchmark data found in $INPUT_FILE" >&2
+    exit 1
+fi
 
-# Generate Time Comparison Table
-cat > "$TIME_TABLE" << 'EOF'
-================================================================================
-                    Matrix Inversion Time Comparison (seconds)
-================================================================================
-EOF
+# Sort dimensions numerically
+sorted_dims=($(printf '%s\n' "${seen_dims[@]}" | sort -n))
 
-printf "%-12s" "Algorithm" >> "$TIME_TABLE"
-for d in "${DIMENSIONS[@]}"; do
-    printf "%12s" "d=$d" >> "$TIME_TABLE"
+# Separate original vs simple algorithms (preserve log order)
+typeset -a orig_algos simple_algos
+for algo in "${seen_algos[@]}"; do
+    if [[ $algo == *"-Simple" ]]; then simple_algos+=("$algo")
+    else orig_algos+=("$algo"); fi
 done
-echo "" >> "$TIME_TABLE"
-echo "--------------------------------------------------------------------------------" >> "$TIME_TABLE"
 
-for algo in "${ALGORITHMS[@]}"; do
-    printf "%-12s" "$algo" >> "$TIME_TABLE"
-    for d in "${DIMENSIONS[@]}"; do
-        key="${algo}_${d}"
-        if [ -n "${times[$key]}" ]; then
-            printf "%12.2f" "${times[$key]}" >> "$TIME_TABLE"
-        else
-            printf "%12s" "-" >> "$TIME_TABLE"
-        fi
+# Representative values
+fk="${seen_algos[1]}_${sorted_dims[1]}"
+num_trials="${p_trials[$fk]:-?}"
+scale_mod="${p_scaleModSize[$fk]:-59}"
+first_mod="${p_firstModSize[$fk]:-60}"
+seed_val="${p_seed[$fk]:-1000+run}"
+
+DASHES="--------------------------------------------------------------------------------"
+EQUALS="================================================================================"
+
+# ============================================================
+# Helper: print per-algorithm parameter table
+# ============================================================
+print_param_block() {
+    local algos=("$@")
+    local NW=22 PW=14 CW=10
+
+    printf "%-${NW}s %-${PW}s" "Algorithm" "Parameter"
+    for d in "${sorted_dims[@]}"; do printf "%${CW}s" "d=$d"; done
+    echo ""
+    echo "$DASHES"
+
+    for algo in "${algos[@]}"; do
+        local first=1
+        for param in multDepth batchSize ringDim levelBudget invIter; do
+            local label=""
+            [[ $first -eq 1 ]] && label="$algo" && first=0
+            printf "%-${NW}s %-${PW}s" "$label" "$param"
+            for d in "${sorted_dims[@]}"; do
+                local ky="${algo}_${d}"
+                local v
+                case "$param" in
+                    multDepth)   v="${p_multDepth[$ky]:--}" ;;
+                    batchSize)   v="${p_batchSize[$ky]:--}" ;;
+                    ringDim)     v="${p_ringDim[$ky]:--}" ;;
+                    levelBudget) v="${p_levelBudget[$ky]}"
+                                 [[ -n "$v" ]] && v="{$v}" || v="-" ;;
+                    invIter)     v="${p_invIter[$ky]:--}" ;;
+                esac
+                printf "%${CW}s" "$v"
+            done
+            echo ""
+        done
+        echo ""
     done
-    echo "" >> "$TIME_TABLE"
-done
+}
 
-echo "--------------------------------------------------------------------------------" >> "$TIME_TABLE"
-echo "Generated: $(date)" >> "$TIME_TABLE"
+# ============================================================
+# Helper: print time table
+# ============================================================
+print_time_block() {
+    local algos=("$@")
+    local NW=22 CW=10
 
-# Generate Accuracy Comparison Table
-cat > "$ACCURACY_TABLE" << 'EOF'
-================================================================================
-                    Matrix Inversion Accuracy Comparison
-================================================================================
-                              log2(Relative Frobenius Error)
---------------------------------------------------------------------------------
-EOF
+    printf "%-${NW}s" "Algorithm"
+    for d in "${sorted_dims[@]}"; do printf "%${CW}s" "d=$d"; done
+    echo ""
+    echo "$DASHES"
 
-printf "%-12s" "Algorithm" >> "$ACCURACY_TABLE"
-for d in "${DIMENSIONS[@]}"; do
-    printf "%12s" "d=$d" >> "$ACCURACY_TABLE"
-done
-echo "" >> "$ACCURACY_TABLE"
-echo "--------------------------------------------------------------------------------" >> "$ACCURACY_TABLE"
-
-for algo in "${ALGORITHMS[@]}"; do
-    printf "%-12s" "$algo" >> "$ACCURACY_TABLE"
-    for d in "${DIMENSIONS[@]}"; do
-        key="${algo}_${d}"
-        if [ -n "${log2_frob[$key]}" ]; then
-            printf "%12.1f" "${log2_frob[$key]}" >> "$ACCURACY_TABLE"
-        else
-            printf "%12s" "-" >> "$ACCURACY_TABLE"
-        fi
+    for algo in "${algos[@]}"; do
+        printf "%-${NW}s" "$algo"
+        for d in "${sorted_dims[@]}"; do
+            local ky="${algo}_${d}"
+            if [[ -n "${times[$ky]}" ]]; then printf "%${CW}.1f" "${times[$ky]}"
+            else printf "%${CW}s" "-"; fi
+        done
+        echo ""
     done
-    echo "" >> "$ACCURACY_TABLE"
-done
+    echo ""
+}
 
-echo "" >> "$ACCURACY_TABLE"
-echo "                              log2(Relative Max Error)" >> "$ACCURACY_TABLE"
-echo "--------------------------------------------------------------------------------" >> "$ACCURACY_TABLE"
+# ============================================================
+# Helper: print accuracy table
+# ============================================================
+print_accuracy_block() {
+    local algos=("$@")
+    local NW=22 CW=10
 
-printf "%-12s" "Algorithm" >> "$ACCURACY_TABLE"
-for d in "${DIMENSIONS[@]}"; do
-    printf "%12s" "d=$d" >> "$ACCURACY_TABLE"
-done
-echo "" >> "$ACCURACY_TABLE"
-echo "--------------------------------------------------------------------------------" >> "$ACCURACY_TABLE"
+    printf "%-${NW}s" "Algorithm"
+    for d in "${sorted_dims[@]}"; do printf "%${CW}s" "d=$d"; done
+    echo ""
+    echo "$DASHES"
 
-for algo in "${ALGORITHMS[@]}"; do
-    printf "%-12s" "$algo" >> "$ACCURACY_TABLE"
-    for d in "${DIMENSIONS[@]}"; do
-        key="${algo}_${d}"
-        if [ -n "${log2_max[$key]}" ]; then
-            printf "%12.1f" "${log2_max[$key]}" >> "$ACCURACY_TABLE"
-        else
-            printf "%12s" "-" >> "$ACCURACY_TABLE"
-        fi
+    for algo in "${algos[@]}"; do
+        printf "%-${NW}s" "$algo"
+        for d in "${sorted_dims[@]}"; do
+            local ky="${algo}_${d}"
+            if [[ -n "${log2_frob[$ky]}" ]]; then printf "%${CW}.1f" "${log2_frob[$ky]}"
+            else printf "%${CW}s" "-"; fi
+        done
+        echo ""
     done
-    echo "" >> "$ACCURACY_TABLE"
-done
+    echo ""
+}
 
-echo "--------------------------------------------------------------------------------" >> "$ACCURACY_TABLE"
-echo "Generated: $(date)" >> "$ACCURACY_TABLE"
+# ============================================================
+# Generate output file
+# ============================================================
+{
+    echo "$EQUALS"
+    echo "  Matrix Inversion Benchmark Results"
+    echo "  Generated: $(date)"
+    echo "$EQUALS"
+    echo ""
 
-echo "Summary tables generated:"
-echo "  - $TIME_TABLE"
-echo "  - $ACCURACY_TABLE"
+    echo "--- Common CKKS Parameters ---"
+    printf "  %-18s %s\n" "scaleModSize:" "${scale_mod} bits"
+    printf "  %-18s %s\n" "firstModSize:" "${first_mod} bits"
+    printf "  %-18s %s\n" "security:" "HEStd_128_classic"
+    printf "  %-18s %s\n" "trials:" "$num_trials"
+    printf "  %-18s %s\n" "seed:" "$seed_val"
+    echo ""
+
+    if [[ ${#orig_algos[@]} -gt 0 ]]; then
+        echo "$EQUALS"
+        echo "  [Original] Per-Algorithm Parameters  (trace + eval_scalar_inverse)"
+        echo "$EQUALS"
+        print_param_block "${orig_algos[@]}"
+    fi
+
+    if [[ ${#simple_algos[@]} -gt 0 ]]; then
+        echo "$EQUALS"
+        echo "  [Simple] Per-Algorithm Parameters  (1/d^2 upperbound scaling, no trace)"
+        echo "$EQUALS"
+        print_param_block "${simple_algos[@]}"
+    fi
+
+    echo "$EQUALS"
+    echo "  Time Comparison (seconds)"
+    echo "$EQUALS"
+    echo ""
+    if [[ ${#orig_algos[@]} -gt 0 ]]; then
+        echo "[Original]"
+        print_time_block "${orig_algos[@]}"
+    fi
+    if [[ ${#simple_algos[@]} -gt 0 ]]; then
+        echo "[Simple]"
+        print_time_block "${simple_algos[@]}"
+    fi
+
+    echo "$EQUALS"
+    echo "  Accuracy Comparison: log2(Rel. Frobenius Error)"
+    echo "$EQUALS"
+    echo ""
+    if [[ ${#orig_algos[@]} -gt 0 ]]; then
+        echo "[Original]"
+        print_accuracy_block "${orig_algos[@]}"
+    fi
+    if [[ ${#simple_algos[@]} -gt 0 ]]; then
+        echo "[Simple]"
+        print_accuracy_block "${simple_algos[@]}"
+    fi
+
+} > "$OUTPUT_FILE"
+
+echo "Results written to $OUTPUT_FILE"

@@ -22,9 +22,7 @@ cd build/benchmark/squaring
 
 ## Output
 
-- `squaring_benchmark_results.txt` — raw output
-- `squaring_summary_time.txt` — time comparison table
-- `squaring_summary_memory.txt` — memory usage table
-- `squaring_summary_accuracy.txt` — accuracy (log2 error) table
+- `squaring_console.log` — raw console output (for debugging)
+- `squaring_results.txt` — clean results: parameters, time table, accuracy table, memory table
 
-Summary tables are generated automatically via `generate_summary_table.sh`.
+`squaring_results.txt` is generated automatically via `generate_summary_table.sh`.

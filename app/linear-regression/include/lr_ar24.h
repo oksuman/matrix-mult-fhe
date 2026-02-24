@@ -31,7 +31,7 @@ private:
         int B = d / s;
         int num_slots = d * d * s;
 
-        auto matrixC = getZeroCiphertext(num_slots)->Clone();
+        auto matrixC = makeZero(num_slots);
         auto matrixA_copy = matA->Clone();
         auto matrixB_copy = matB->Clone();
         matrixA_copy->SetSlots(num_slots);
@@ -145,12 +145,6 @@ private:
         }
 
         return Y;
-    }
-
-    Ciphertext<DCRTPoly> getZeroCiphertext(int batchSize) {
-        std::vector<double> zeroVec(batchSize, 0.0);
-        auto zeroPtx = this->m_cc->MakeCKKSPackedPlaintext(zeroVec, 1, 0, nullptr, batchSize);
-        return this->m_cc->Encrypt(zeroPtx, this->m_keyPair.publicKey);
     }
 
 public:

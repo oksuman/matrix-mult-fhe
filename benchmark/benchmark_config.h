@@ -19,19 +19,20 @@ using namespace lbcrypto;
 namespace BenchmarkConfig {
 
 // Encryption Parameters (unified for all benchmarks)
-constexpr int MULT_DEPTH = 30;
+constexpr int MULT_DEPTH        = 31;   // original inversion (trace + eval_scalar_inverse)
+constexpr int MULT_DEPTH_SIMPLE = 30;   // simplified inversion (1/d^2 upperbound, no trace)
 constexpr int FIRST_MOD_SIZE = 60;
 constexpr int SCALE_MOD_SIZE = 59;
-// LEVEL_BUDGET: use {4, 4} when creating std::vector
+// original levelBudget: {4, 5}, simple levelBudget: {4, 4}
 
-// Matrix Inversion Iterations by Dimension (95th percentile)
+// Matrix Inversion Iterations by Dimension
 constexpr int getInversionIterations(int d) {
     switch(d) {
         case 4:  return 18;
         case 8:  return 22;
         case 16: return 25;
-        case 32: return 27;
-        case 64: return 30;
+        case 32: return 28;
+        case 64: return 31;
         default: return 25;
     }
 }

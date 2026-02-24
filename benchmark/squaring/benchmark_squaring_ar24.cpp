@@ -45,7 +45,7 @@ void runSquaringBenchmark(int numRuns = 1) {
     auto enc = std::make_shared<Encryption>(cc, keyPair.publicKey);
     auto algo = std::make_unique<MatrixMult_AR24<d>>(enc, cc, keyPair.publicKey, rotations);
 
-    printSquaringBenchmarkHeader("AR24", d, numRuns, multDepth, Scaling, cc->GetRingDimension());
+    printSquaringBenchmarkHeader("AR24", d, numRuns, multDepth, Scaling, cc->GetRingDimension(), d * d * s);
 
     auto matrix = generateRandomMatrix(d, 42);
     auto enc_matrix = enc->encryptInput(matrix);
@@ -127,17 +127,28 @@ int main(int argc, char* argv[]) {
     std::cout << "Idle Memory: " << std::fixed << std::setprecision(4) << g_idleMemoryGB << " GB" << std::endl;
 
     #ifdef _OPENMP
-    omp_set_num_threads(1);
     std::cout << "OpenMP Threads: " << omp_get_max_threads() << std::endl;
     #else
     std::cout << "OpenMP: Not enabled (single thread)" << std::endl;
     #endif
 
-    runSquaringBenchmark<4>(numRuns);
-    runSquaringBenchmark<8>(numRuns);
-    runSquaringBenchmark<16>(numRuns);
-    runSquaringBenchmark<32>(numRuns);
-    runSquaringBenchmark<64>(numRuns);
+    if (argc > 2) {
+        int d = std::atoi(argv[2]);
+        switch (d) {
+            case 4:  runSquaringBenchmark<4>(numRuns);  break;
+            case 8:  runSquaringBenchmark<8>(numRuns);  break;
+            case 16: runSquaringBenchmark<16>(numRuns); break;
+            case 32: runSquaringBenchmark<32>(numRuns); break;
+            case 64: runSquaringBenchmark<64>(numRuns); break;
+            default: std::cerr << "Unsupported dimension: " << d << std::endl; break;
+        }
+    } else {
+        runSquaringBenchmark<4>(numRuns);
+        runSquaringBenchmark<8>(numRuns);
+        runSquaringBenchmark<16>(numRuns);
+        runSquaringBenchmark<32>(numRuns);
+        runSquaringBenchmark<64>(numRuns);
+    }
 
     std::cout << "\n============================================" << std::endl;
     std::cout << "  Benchmark Complete" << std::endl;

@@ -6,6 +6,8 @@
 #include <cmath>
 #include <iostream>
 #include <fstream>
+#include <chrono>
+#include <ctime>
 #include <stdexcept>
 
 struct LDATrainResult {
@@ -377,6 +379,12 @@ public:
         if (!file.is_open()) {
             std::cerr << "Failed to open file: " << filename << std::endl;
             return;
+        }
+
+        {
+            auto now = std::chrono::system_clock::now();
+            auto t = std::chrono::system_clock::to_time_t(now);
+            file << "Generated: " << std::ctime(&t);
         }
 
         file << std::fixed << std::setprecision(6);

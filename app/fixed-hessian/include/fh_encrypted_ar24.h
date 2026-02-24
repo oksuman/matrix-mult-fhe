@@ -30,7 +30,7 @@ private:
         int B = d / s;
         int num_slots = d * d * s;
 
-        auto matrixC = getZeroCiphertext(num_slots)->Clone();
+        auto matrixC = makeZero(num_slots);
         auto matrixA_copy = matA->Clone();
         auto matrixB_copy = matB->Clone();
         matrixA_copy->SetSlots(num_slots);
@@ -206,7 +206,9 @@ public:
             Y->SetSlots(d * d);
             Y = m_cc->EvalBootstrap(Y, 2, 18);
             A_bar->SetSlots(d * d * s);
+            A_bar = clean(A_bar, d, s);
             Y->SetSlots(d * d * s);
+            Y = clean(Y, d, s);
         }
 
         Y = eval_mult_AR24(Y, m_cc->EvalAdd(pI_mult, A_bar), d, s);

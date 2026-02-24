@@ -31,6 +31,12 @@ template <int d> class MatrixInverseBase {
 
     virtual Ciphertext<DCRTPoly>
     eval_inverse(const Ciphertext<DCRTPoly> &M) = 0;
+
+    // trace 계산 및 eval_scalar_inverse 없이
+    // upperbound (1/d^2) 로 직접 scaling 하는 간소화된 inversion.
+    // eval_transpose_scaled 를 이용해 transpose + scaling 을 한 번에 처리한다.
+    virtual Ciphertext<DCRTPoly>
+    eval_inverse_simple(const Ciphertext<DCRTPoly> &M) = 0;
 };
 
 // Implementation using JKLS18 matrix multiplication
@@ -91,6 +97,37 @@ class MatrixInverse_JKLS18 : public MatrixInverseBase<d>,
 
         return Y;
     }
+
+    // trace/eval_scalar_inverse 없이 1/d^2 upperbound 로 직접 scaling.
+    // Y0 = eval_transpose_scaled(M, 1/d^2)
+    // A0 = I - eval_mult(M, Y0)  (= I - (1/d^2)*M*M^T)
+    Ciphertext<DCRTPoly> eval_inverse_simple(const Ciphertext<DCRTPoly> &M) override {
+        double scaleFactor = 1.0 / static_cast<double>(d * d);
+
+        std::vector<double> vI = this->initializeIdentityMatrix(d);
+        Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI);
+
+        auto Y = this->eval_transpose_scaled(M, scaleFactor);
+        auto A_bar = this->m_cc->EvalSub(pI, this->eval_mult(M, Y));
+
+        for (int i = 0; i < this->r - 1; i++) {
+            if ((int)Y->GetLevel() >= this->depth - 3 ||
+                (int)A_bar->GetLevel() >= this->depth - 3) {
+                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+                Y = m_cc->EvalBootstrap(Y, 2, 18);
+            }
+            Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
+            A_bar = this->eval_mult(A_bar, A_bar);
+        }
+        if ((int)Y->GetLevel() >= this->depth - 3 ||
+            (int)A_bar->GetLevel() >= this->depth - 3) {
+            A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+            Y = m_cc->EvalBootstrap(Y, 2, 18);
+        }
+        Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
+
+        return Y;
+    }
 };
 
 // RT22
@@ -144,6 +181,40 @@ class MatrixInverse_RT22 : public MatrixInverseBase<d>,
             A_bar = this->eval_mult(A_bar, A_bar);
         }
         if ((int)Y->GetLevel() >= this->depth - 2) {
+            A_bar->SetSlots(d * d);
+            A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+            Y->SetSlots(d * d);
+            Y = m_cc->EvalBootstrap(Y, 2, 18);
+        }
+        Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
+        return Y;
+    }
+
+    // trace/eval_scalar_inverse 없이 1/d^2 upperbound 로 직접 scaling.
+    Ciphertext<DCRTPoly> eval_inverse_simple(const Ciphertext<DCRTPoly> &M) override {
+        double scaleFactor = 1.0 / static_cast<double>(d * d);
+
+        std::vector<double> vI = this->initializeIdentityMatrix(d);
+        Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI);
+
+        auto Y = this->eval_transpose_scaled(M, scaleFactor);
+        auto MM_scaled = this->eval_mult(M, Y);
+        MM_scaled->SetSlots(d * d);
+        auto A_bar = this->m_cc->EvalSub(pI, MM_scaled);
+
+        for (int i = 0; i < this->r - 1; i++) {
+            if ((int)Y->GetLevel() >= this->depth - 2 ||
+                (int)A_bar->GetLevel() >= this->depth - 2) {
+                A_bar->SetSlots(d * d);
+                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+                Y->SetSlots(d * d);
+                Y = m_cc->EvalBootstrap(Y, 2, 18);
+            }
+            Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
+            A_bar = this->eval_mult(A_bar, A_bar);
+        }
+        if ((int)Y->GetLevel() >= this->depth - 2 ||
+            (int)A_bar->GetLevel() >= this->depth - 2) {
             A_bar->SetSlots(d * d);
             A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
             Y->SetSlots(d * d);
@@ -235,6 +306,63 @@ class MatrixInverse_AR24 : public MatrixInverseBase<d>,
         return Y;
     }
 
+    // trace/eval_scalar_inverse 없이 1/d^2 upperbound 로 직접 scaling.
+    // eval_transpose_scaled 로 Y0 = (1/d^2)*M^T 를 한 번에 계산하고,
+    // eval_mult(M, Y0) 으로 (1/d^2)*M*M^T 를 구한다.
+    Ciphertext<DCRTPoly> eval_inverse_simple(const Ciphertext<DCRTPoly> &M) override {
+        double scaleFactor = 1.0 / static_cast<double>(d * d);
+
+        std::vector<double> vI = this->initializeIdentityMatrix(d);
+        Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI, 1, 0, nullptr, d * d);
+
+        // Y0 = (1/d^2)*M^T (scaled transpose)
+        auto Y = this->eval_transpose_scaled(M, scaleFactor);
+
+        // eval_mult(M, Y0) = (1/d^2)*M*M^T — AR24는 clean() 필요
+        auto M_expanded = M->Clone();
+        M_expanded->SetSlots(d * d * this->s);
+        M_expanded = this->clean(M_expanded);
+        auto Y_expanded = Y->Clone();
+        Y_expanded->SetSlots(d * d * this->s);
+        Y_expanded = this->clean(Y_expanded);
+
+        auto MM_scaled = this->eval_mult(M_expanded, Y_expanded);
+        auto A_bar = this->m_cc->EvalSub(pI, MM_scaled);
+
+        for (int i = 0; i < this->r - 1; i++) {
+            if ((int)Y->GetLevel() >= this->depth - 3) {
+                Y = m_cc->EvalBootstrap(Y, 2, 18);
+                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+            }
+            auto pI_level = m_cc->MakeCKKSPackedPlaintext(vI, 1, A_bar->GetLevel(), nullptr, d * d);
+            auto I_plus_A = this->m_cc->EvalAdd(pI_level, A_bar);
+
+            I_plus_A->SetSlots(d * d * this->s);
+            I_plus_A = this->clean(I_plus_A);
+            Y->SetSlots(d * d * this->s);
+            Y = this->clean(Y);
+            Y = this->eval_mult(Y, I_plus_A);
+
+            A_bar->SetSlots(d * d * this->s);
+            A_bar = this->clean(A_bar);
+            auto A_bar_copy = A_bar->Clone();
+            A_bar = this->eval_mult(A_bar, A_bar_copy);
+        }
+        if ((int)Y->GetLevel() >= this->depth - 3) {
+            Y = m_cc->EvalBootstrap(Y, 2, 18);
+            A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+        }
+        auto pI_final = m_cc->MakeCKKSPackedPlaintext(vI, 1, A_bar->GetLevel(), nullptr, d * d);
+        auto I_plus_A_final = this->m_cc->EvalAdd(pI_final, A_bar);
+
+        I_plus_A_final->SetSlots(d * d * this->s);
+        I_plus_A_final = this->clean(I_plus_A_final);
+        Y->SetSlots(d * d * this->s);
+        Y = this->clean(Y);
+        Y = this->eval_mult(Y, I_plus_A_final);
+        return Y;
+    }
+
 };
 
 // Implementation using newCol matrix multiplication
@@ -275,6 +403,32 @@ class MatrixInverse_newCol : public MatrixInverseBase<d>,
         auto A_bar =
             this->m_cc->EvalSub(pI, this->m_cc->EvalMultAndRelinearize(
                                         MM_transposed, trace_reciprocal));
+
+        for (int i = 0; i < this->r - 1; i++) {
+            if ((int)Y->GetLevel() >= this->depth - 2) {
+                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+                Y = m_cc->EvalBootstrap(Y, 2, 18);
+            }
+            Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
+            A_bar = this->eval_mult(A_bar, A_bar);
+        }
+        if ((int)Y->GetLevel() >= this->depth - 2) {
+            A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+            Y = m_cc->EvalBootstrap(Y, 2, 18);
+        }
+        Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
+        return Y;
+    }
+
+    // trace/eval_scalar_inverse 없이 1/d^2 upperbound 로 직접 scaling.
+    Ciphertext<DCRTPoly> eval_inverse_simple(const Ciphertext<DCRTPoly> &M) override {
+        double scaleFactor = 1.0 / static_cast<double>(d * d);
+
+        std::vector<double> vI = this->initializeIdentityMatrix(d);
+        Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI, 1, 0, nullptr, d * d);
+
+        auto Y = this->eval_transpose_scaled(M, scaleFactor);
+        auto A_bar = this->m_cc->EvalSub(pI, this->eval_mult(M, Y));
 
         for (int i = 0; i < this->r - 1; i++) {
             if ((int)Y->GetLevel() >= this->depth - 2) {
@@ -347,6 +501,32 @@ class MatrixInverse_newRow : public MatrixInverseBase<d>,
         }
         Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
 
+        return Y;
+    }
+
+    // newRow 는 실험 대상 외이지만 인터페이스 완성을 위해 구현
+    Ciphertext<DCRTPoly> eval_inverse_simple(const Ciphertext<DCRTPoly> &M) override {
+        double scaleFactor = 1.0 / static_cast<double>(d * d);
+
+        std::vector<double> vI = this->initializeIdentityMatrix(d);
+        Plaintext pI = this->m_cc->MakeCKKSPackedPlaintext(vI);
+
+        auto Y = this->eval_transpose_scaled(M, scaleFactor);
+        auto A_bar = this->m_cc->EvalSub(pI, this->eval_mult(M, Y));
+
+        for (int i = 0; i < this->r - 1; i++) {
+            if ((int)Y->GetLevel() >= this->depth - 2) {
+                A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+                Y = m_cc->EvalBootstrap(Y, 2, 18);
+            }
+            Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
+            A_bar = this->eval_mult(A_bar, A_bar);
+        }
+        if ((int)Y->GetLevel() >= this->depth - 2) {
+            A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
+            Y = m_cc->EvalBootstrap(Y, 2, 18);
+        }
+        Y = this->eval_mult(Y, this->m_cc->EvalAdd(pI, A_bar));
         return Y;
     }
 };

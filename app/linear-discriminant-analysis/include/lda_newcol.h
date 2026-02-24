@@ -76,10 +76,10 @@ private:
 
     Ciphertext<DCRTPoly> vecRotsOpt(const std::vector<Ciphertext<DCRTPoly>>& matrixM,
                                     int is, int s, int np, int d) {
-        auto rotsM = getZeroCiphertext(d * d * s);
+        auto rotsM = makeZero(d * d * s);
 
         for (int j = 0; j < s / np; j++) {
-            auto T = getZeroCiphertext(d * d * s);
+            auto T = makeZero(d * d * s);
 
             for (int i = 0; i < np; i++) {
                 auto msk = generateMaskVector(d * d * s, np * j + i, d);
@@ -98,7 +98,7 @@ private:
     Ciphertext<DCRTPoly> eval_mult_NewCol(const Ciphertext<DCRTPoly>& matrixA,
                                           const Ciphertext<DCRTPoly>& matrixB,
                                           int s, int B, int ng, int nb, int np, int d) {
-        auto matrixC = getZeroCiphertext(d * d * s);
+        auto matrixC = makeZero(d * d * s);
         Ciphertext<DCRTPoly> babyStepsOfA[nb];
         std::vector<Ciphertext<DCRTPoly>> babyStepsOfB;
 
@@ -116,11 +116,11 @@ private:
 
         for (int i = 0; i < B; i++) {
             auto batched_rotations_B = vecRotsOpt(babyStepsOfB, i, s, np, d);
-            auto diagA = getZeroCiphertext(d * d * s);
+            auto diagA = makeZero(d * d * s);
 
             for (int k = -ng; k < ng; k++) {
                 if (k < 0) {
-                    auto tmp = getZeroCiphertext(d * d * s);
+                    auto tmp = makeZero(d * d * s);
                     auto babyStep = (k == -ng) ? 1 : 0;
 
                     for (int j = d * d + k * nb + 1 + babyStep; j <= d * d + (k + 1) * nb; j++) {
@@ -133,7 +133,7 @@ private:
                     }
                     m_cc->EvalAddInPlace(diagA, rot.rotate(tmp, k * nb));
                 } else {
-                    auto tmp = getZeroCiphertext(d * d * s);
+                    auto tmp = makeZero(d * d * s);
                     auto babyStep = 0;
 
                     for (int j = k * nb + 1; j <= (k + 1) * nb; j++) {
@@ -427,8 +427,6 @@ public:
         auto swStart = high_resolution_clock::now();
 
         auto Sw = getZeroCiphertext(largeDim * largeDim);
-        result.X_bar_c_decrypted.resize(numClasses);
-        result.S_c_decrypted.resize(numClasses);
 
         for (size_t c = 0; c < numClasses; c++) {
             size_t s_c = dataset.samplesPerClass[c];
@@ -441,22 +439,18 @@ public:
             // X_bar_c = X_c - μ_c (both are 256×256, μ has zeros in padding rows)
             auto X_bar_c = m_cc->EvalSub(classDataEncrypted[c], classMeanForSw[c]);
 
-            // Decrypt and store X_bar_c for debugging
-            {
-                Plaintext ptxXbar;
-                m_cc->Decrypt(m_keyPair.secretKey, X_bar_c, &ptxXbar);
-                result.X_bar_c_decrypted[c] = ptxXbar->GetRealPackedValue();
-            }
-
             if (verbose) {
                 std::cout << "    X_bar_c computed. Level: " << X_bar_c->GetLevel() << std::endl;
 
+                Plaintext ptxXbar;
+                m_cc->Decrypt(m_keyPair.secretKey, X_bar_c, &ptxXbar);
+                std::vector<double> xbarVals = ptxXbar->GetRealPackedValue();
                 std::cout << "    X_bar_c (first 5 rows, first " << f << " cols):" << std::endl;
                 for (int row = 0; row < 5 && row < (int)s_c; row++) {
                     std::cout << "      Row " << row << ": ";
                     for (size_t col = 0; col < f; col++) {
                         std::cout << std::setw(10) << std::setprecision(4) << std::fixed
-                                  << result.X_bar_c_decrypted[c][row * largeDim + col] << " ";
+                                  << xbarVals[row * largeDim + col] << " ";
                     }
                     std::cout << std::endl;
                 }
@@ -496,27 +490,22 @@ public:
             auto S_c = eval_mult_JKLS18(X_bar_c_T, X_bar_c, largeDim);
 
             if (verbose) {
-                // Decrypt S_c only when verbose for debugging
-                Plaintext ptxSc256;
-                m_cc->Decrypt(m_keyPair.secretKey, S_c, &ptxSc256);
-                result.S_c_decrypted[c] = ptxSc256->GetRealPackedValue();
-            }
-
-            if (verbose) {
                 std::cout << "    S_c computed. Level: " << S_c->GetLevel() << std::endl;
 
+                Plaintext ptxSc256;
+                m_cc->Decrypt(m_keyPair.secretKey, S_c, &ptxSc256);
+                std::vector<double> scVals = ptxSc256->GetRealPackedValue();
                 std::cout << "    S_c (256x256, top-left " << f << "x" << f << " before rebatch):" << std::endl;
                 for (size_t row = 0; row < f; row++) {
                     std::cout << "      ";
                     for (size_t col = 0; col < f; col++) {
                         std::cout << std::setw(10) << std::setprecision(4) << std::fixed
-                                  << result.S_c_decrypted[c][row * largeDim + col] << " ";
+                                  << scVals[row * largeDim + col] << " ";
                     }
                     std::cout << std::endl;
                 }
                 std::cout << std::endl;
 
-                // Print S_c after rebatch (16x16)
                 auto S_c_rebatched = rebatchToFeatureSpace(S_c, largeDim, f_tilde);
                 debugPrintMatrix("    S_c (class " + std::to_string(c) + " scatter, after rebatch)", S_c_rebatched, f, f, f_tilde);
             }

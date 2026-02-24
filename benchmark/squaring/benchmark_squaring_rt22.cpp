@@ -42,7 +42,7 @@ void runSquaringBenchmark(int numRuns = 1) {
     auto enc = std::make_shared<Encryption>(cc, keyPair.publicKey);
     auto algo = std::make_unique<MatrixMult_RT22<d>>(enc, cc, keyPair.publicKey, rotations);
 
-    printSquaringBenchmarkHeader("RT22", d, numRuns, multDepth, Scaling, cc->GetRingDimension());
+    printSquaringBenchmarkHeader("RT22", d, numRuns, multDepth, Scaling, cc->GetRingDimension(), d * d * d);
 
     auto matrix = generateRandomMatrix(d, 42);
     auto enc_matrix = enc->encryptInput(matrix);
@@ -124,7 +124,6 @@ int main(int argc, char* argv[]) {
     std::cout << "Idle Memory: " << std::fixed << std::setprecision(4) << g_idleMemoryGB << " GB" << std::endl;
 
     #ifdef _OPENMP
-    omp_set_num_threads(1);
     std::cout << "OpenMP Threads: " << omp_get_max_threads() << std::endl;
     #else
     std::cout << "OpenMP: Not enabled (single thread)" << std::endl;

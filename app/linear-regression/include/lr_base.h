@@ -5,6 +5,7 @@
 #include "rotation.h"
 #include "csv_processor.h"
 #include "mse_calculator.h"
+#include <map>
 #include <memory>
 #include <chrono>
 #include <tuple>
@@ -35,6 +36,17 @@ protected:
     std::vector<int> m_rotIndices;
     Ciphertext<DCRTPoly> m_weights;
     RotationComposer rot;
+    mutable std::map<int, Ciphertext<DCRTPoly>> m_zeroCache;
+
+    Ciphertext<DCRTPoly> makeZero(int batchSize) {
+        auto it = m_zeroCache.find(batchSize);
+        if (it == m_zeroCache.end()) {
+            std::vector<double> zeroVec(batchSize, 0.0);
+            auto zeroPtx = m_cc->MakeCKKSPackedPlaintext(zeroVec, 1, 0, nullptr, batchSize);
+            m_zeroCache[batchSize] = m_cc->Encrypt(zeroPtx, m_keyPair.publicKey);
+        }
+        return m_zeroCache.at(batchSize)->Clone();
+    }
 
     using TimingResult = std::tuple<std::chrono::duration<double>,
                                    std::chrono::duration<double>,
@@ -99,9 +111,7 @@ protected:
     }
 
     Ciphertext<DCRTPoly> sigmaTransform(const Ciphertext<DCRTPoly>& M, int d) {
-        std::vector<double> zeroVec(d * d, 0.0);
-        auto sigma_M = m_cc->Encrypt(m_keyPair.publicKey,
-            m_cc->MakeCKKSPackedPlaintext(zeroVec, 1, 0, nullptr, d * d));
+        auto sigma_M = makeZero(d * d);
 
         int bs = (int)round(sqrt((double)d));
 
@@ -118,9 +128,7 @@ protected:
         }
 
         for (int i = -(bs - 1); i < bs; i++) {
-            std::vector<double> zeroVec2(d * d, 0.0);
-            auto tmp = m_cc->Encrypt(m_keyPair.publicKey,
-                m_cc->MakeCKKSPackedPlaintext(zeroVec2, 1, 0, nullptr, d * d));
+            auto tmp = makeZero(d * d);
             for (int j = 0; j < bs; j++) {
                 auto msk = generateSigmaMsk(bs * i + j, d);
                 msk = vectorRotate(msk, -bs * i);
@@ -134,9 +142,7 @@ protected:
     }
 
     Ciphertext<DCRTPoly> tauTransform(const Ciphertext<DCRTPoly>& M, int d) {
-        std::vector<double> zeroVec(d * d, 0.0);
-        auto tau_M = m_cc->Encrypt(m_keyPair.publicKey,
-            m_cc->MakeCKKSPackedPlaintext(zeroVec, 1, 0, nullptr, d * d));
+        auto tau_M = makeZero(d * d);
 
         double squareRootd = sqrt((double)d);
         int squareRootIntd = (int)squareRootd;
@@ -148,9 +154,7 @@ protected:
             }
 
             for (int i = 0; i < squareRootIntd; i++) {
-                std::vector<double> zeroVec2(d * d, 0.0);
-                auto tmp = m_cc->Encrypt(m_keyPair.publicKey,
-                    m_cc->MakeCKKSPackedPlaintext(zeroVec2, 1, 0, nullptr, d * d));
+                auto tmp = makeZero(d * d);
                 for (int j = 0; j < squareRootIntd; j++) {
                     auto msk = generateTauMsk(squareRootIntd * i + j, d);
                     msk = vectorRotate(msk, -squareRootIntd * d * i);
@@ -175,9 +179,7 @@ protected:
             }
 
             for (int i = 0; i < steps - 1; i++) {
-                std::vector<double> zeroVec2(d * d, 0.0);
-                auto tmp = m_cc->Encrypt(m_keyPair.publicKey,
-                    m_cc->MakeCKKSPackedPlaintext(zeroVec2, 1, 0, nullptr, d * d));
+                auto tmp = makeZero(d * d);
                 for (int j = 0; j < steps; j++) {
                     auto msk = generateTauMsk(steps * i + j, d);
                     msk = vectorRotate(msk, -steps * d * i);
@@ -269,14 +271,11 @@ protected:
         }
 
         // Zero ciphertext for accumulation
-        std::vector<double> zeroVec(batchSize, 0.0);
-        auto M_transposed = m_cc->Encrypt(m_keyPair.publicKey,
-            m_cc->MakeCKKSPackedPlaintext(zeroVec, 1, 0, nullptr, batchSize));
+        auto M_transposed = makeZero(batchSize);
 
         // Giant steps: iterate over blocks of size bs
         for (int i = -bs; i < bs; i++) {
-            auto tmp = m_cc->Encrypt(m_keyPair.publicKey,
-                m_cc->MakeCKKSPackedPlaintext(zeroVec, 1, 0, nullptr, batchSize));
+            auto tmp = makeZero(batchSize);
 
             int js = (i == -bs) ? 1 : 0;  // skip k=0 case when i=-bs (k=-d*bs would be out of range)
 

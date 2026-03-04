@@ -72,8 +72,31 @@ void runSquaringBenchmark(int numRuns = 1) {
         auto start = std::chrono::high_resolution_clock::now();
         for (int i = 0; i < SQUARING_ITERATIONS; i++) {
             current = algo->eval_mult_and_clean(current, current);
+
+            if (run == 0) {
+                auto gt_i = computeGroundTruthSquaring(matrix, d, i + 1);
+                Plaintext dbg_ptx;
+                cc->Decrypt(keyPair.secretKey, current, &dbg_ptx);
+                dbg_ptx->SetLength(d * d * s);
+                std::vector<double> dbg_vals = dbg_ptx->GetRealPackedValue();
+                dbg_vals.resize(d * d);
+                ErrorMetrics dbg_err;
+                dbg_err.compute(gt_i, dbg_vals, d);
+                double gt_norm = 0.0;
+                for (auto v : gt_i) gt_norm += v * v;
+                gt_norm = std::sqrt(gt_norm);
+                double fhe_norm = 0.0;
+                for (auto v : dbg_vals) fhe_norm += v * v;
+                fhe_norm = std::sqrt(fhe_norm);
+                std::cout << "  [iter " << (i+1) << "] level=" << current->GetLevel()
+                          << " ||gt||=" << std::scientific << std::setprecision(3) << gt_norm
+                          << " ||fhe||=" << fhe_norm
+                          << " log2err=" << std::fixed << std::setprecision(1) << dbg_err.log2FrobError
+                          << std::endl;
+            }
         }
         auto end = std::chrono::high_resolution_clock::now();
+        if (run == 0) std::cout << "  Final level: " << current->GetLevel() << std::endl;
 
         if (run == 0 && memMonitor) {
             memMetrics.peakMemoryGB = memMonitor->getPeakMemoryGB();
@@ -87,7 +110,7 @@ void runSquaringBenchmark(int numRuns = 1) {
 
         Plaintext ptx;
         cc->Decrypt(keyPair.secretKey, current, &ptx);
-        ptx->SetLength(d * d);
+        ptx->SetLength(d * d * s);
         std::vector<double> computed = ptx->GetRealPackedValue();
         computed.resize(d * d);
 

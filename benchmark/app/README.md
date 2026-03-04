@@ -31,7 +31,7 @@ Three ML applications comparing encrypted matrix inversion algorithms (NewCol vs
 bash benchmark/app/run_all_apps.sh
 ```
 
-빌드가 되어 있어야 함. 처음 실행 시:
+Build first if not already done:
 ```bash
 mkdir build && cd build && cmake .. && make -j$(sysctl -n hw.physicalcpu) && cd ..
 bash benchmark/app/run_all_apps.sh

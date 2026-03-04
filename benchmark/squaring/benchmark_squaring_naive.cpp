@@ -18,7 +18,7 @@ void runSquaringBenchmark(int numRuns = 1) {
     memMetrics.idleMemoryGB = g_idleMemoryGB;
 
     // Setup encryption
-    const int multDepth = SQUARING_ITERATIONS * 2;
+    const int multDepth = SQUARING_ITERATIONS * 1;
     CCParams<CryptoContextCKKSRNS> parameters;
     parameters.SetMultiplicativeDepth(multDepth);
     parameters.SetScalingModSize(Scaling);
@@ -94,6 +94,7 @@ void runSquaringBenchmark(int numRuns = 1) {
         }
 
         auto end = std::chrono::high_resolution_clock::now();
+        if (run == 0) std::cout << "  Final level: " << current[0]->GetLevel() << std::endl;
         // ========== Time measurement END ==========
 
         // Record peak memory (first run only)
@@ -171,8 +172,17 @@ int main(int argc, char* argv[]) {
     #endif
 
     // Only d=4,8 due to d^2 ciphertexts complexity
-    runSquaringBenchmark<4>(numRuns);
-    runSquaringBenchmark<8>(numRuns);
+    if (argc > 2) {
+        int d = std::atoi(argv[2]);
+        switch (d) {
+            case 4: runSquaringBenchmark<4>(numRuns); break;
+            case 8: runSquaringBenchmark<8>(numRuns); break;
+            default: std::cerr << "Unsupported dimension: " << d << std::endl; break;
+        }
+    } else {
+        runSquaringBenchmark<4>(numRuns);
+        runSquaringBenchmark<8>(numRuns);
+    }
 
     std::cout << "\n============================================" << std::endl;
     std::cout << "  Benchmark Complete" << std::endl;

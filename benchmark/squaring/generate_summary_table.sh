@@ -73,7 +73,7 @@ while IFS= read -r line; do
             if   [[ $line =~ 'multDepth:[[:space:]]+([0-9]+)'    ]]; then p_multDepth[$k]="${match[1]}"
             elif [[ $line =~ 'scaleModSize:[[:space:]]+([0-9]+)' ]]; then p_scaleModSize[$k]="${match[1]}"
             elif [[ $line =~ 'batchSize:[[:space:]]+([0-9]+)'    ]]; then p_batchSize[$k]="${match[1]}"
-            elif [[ $line =~ 'ringDimension:[[:space:]]+([0-9]+)']]; then p_ringDim[$k]="${match[1]}"
+            elif [[ $line =~ 'ringDimension:[[:space:]]+([0-9]+)' ]]; then p_ringDim[$k]="${match[1]}"
             fi
             ;;
         exp)
@@ -119,7 +119,7 @@ EQUALS="========================================================================
 # Helper: per-algorithm parameter table
 # ============================================================
 print_param_block() {
-    local NW=12 PW=14 CW=10
+    local NW=12 PW=14 CW=10 algo param d ky v label first
 
     printf "%-${NW}s %-${PW}s" "Algorithm" "Parameter"
     for d in "${sorted_dims[@]}"; do printf "%${CW}s" "d=$d"; done
@@ -127,14 +127,13 @@ print_param_block() {
     echo "$DASHES"
 
     for algo in "${seen_algos[@]}"; do
-        local first=1
+        first=1
         for param in multDepth batchSize ringDim; do
-            local label=""
+            label=""
             [[ $first -eq 1 ]] && label="$algo" && first=0
             printf "%-${NW}s %-${PW}s" "$label" "$param"
             for d in "${sorted_dims[@]}"; do
-                local ky="${algo}_${d}"
-                local v
+                ky="${algo}_${d}"
                 case "$param" in
                     multDepth) v="${p_multDepth[$ky]:--}" ;;
                     batchSize) v="${p_batchSize[$ky]:--}" ;;

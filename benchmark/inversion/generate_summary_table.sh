@@ -56,7 +56,7 @@ while IFS= read -r line; do
             elif [[ $line =~ 'scaleModSize:[[:space:]]+([0-9]+)' ]]; then p_scaleModSize[$k]="${match[1]}"
             elif [[ $line =~ 'firstModSize:[[:space:]]+([0-9]+)' ]]; then p_firstModSize[$k]="${match[1]}"
             elif [[ $line =~ 'batchSize:[[:space:]]+([0-9]+)'    ]]; then p_batchSize[$k]="${match[1]}"
-            elif [[ $line =~ 'ringDimension:[[:space:]]+([0-9]+)']]; then p_ringDim[$k]="${match[1]}"
+            elif [[ $line =~ 'ringDimension:[[:space:]]+([0-9]+)' ]]; then p_ringDim[$k]="${match[1]}"
             fi
             ;;
         boot)
@@ -109,7 +109,7 @@ EQUALS="========================================================================
 # ============================================================
 print_param_block() {
     local algos=("$@")
-    local NW=22 PW=14 CW=10
+    local NW=22 PW=14 CW=10 algo param d ky v label first
 
     printf "%-${NW}s %-${PW}s" "Algorithm" "Parameter"
     for d in "${sorted_dims[@]}"; do printf "%${CW}s" "d=$d"; done
@@ -117,14 +117,13 @@ print_param_block() {
     echo "$DASHES"
 
     for algo in "${algos[@]}"; do
-        local first=1
+        first=1
         for param in multDepth batchSize ringDim levelBudget invIter; do
-            local label=""
+            label=""
             [[ $first -eq 1 ]] && label="$algo" && first=0
             printf "%-${NW}s %-${PW}s" "$label" "$param"
             for d in "${sorted_dims[@]}"; do
-                local ky="${algo}_${d}"
-                local v
+                ky="${algo}_${d}"
                 case "$param" in
                     multDepth)   v="${p_multDepth[$ky]:--}" ;;
                     batchSize)   v="${p_batchSize[$ky]:--}" ;;
@@ -146,7 +145,7 @@ print_param_block() {
 # ============================================================
 print_time_block() {
     local algos=("$@")
-    local NW=22 CW=10
+    local NW=22 CW=10 algo d ky
 
     printf "%-${NW}s" "Algorithm"
     for d in "${sorted_dims[@]}"; do printf "%${CW}s" "d=$d"; done
@@ -156,7 +155,7 @@ print_time_block() {
     for algo in "${algos[@]}"; do
         printf "%-${NW}s" "$algo"
         for d in "${sorted_dims[@]}"; do
-            local ky="${algo}_${d}"
+            ky="${algo}_${d}"
             if [[ -n "${times[$ky]}" ]]; then printf "%${CW}.1f" "${times[$ky]}"
             else printf "%${CW}s" "-"; fi
         done
@@ -170,7 +169,7 @@ print_time_block() {
 # ============================================================
 print_accuracy_block() {
     local algos=("$@")
-    local NW=22 CW=10
+    local NW=22 CW=10 algo d ky
 
     printf "%-${NW}s" "Algorithm"
     for d in "${sorted_dims[@]}"; do printf "%${CW}s" "d=$d"; done
@@ -180,8 +179,29 @@ print_accuracy_block() {
     for algo in "${algos[@]}"; do
         printf "%-${NW}s" "$algo"
         for d in "${sorted_dims[@]}"; do
-            local ky="${algo}_${d}"
+            ky="${algo}_${d}"
             if [[ -n "${log2_frob[$ky]}" ]]; then printf "%${CW}.1f" "${log2_frob[$ky]}"
+            else printf "%${CW}s" "-"; fi
+        done
+        echo ""
+    done
+    echo ""
+}
+
+print_accuracy_max_block() {
+    local algos=("$@")
+    local NW=22 CW=10 algo d ky
+
+    printf "%-${NW}s" "Algorithm"
+    for d in "${sorted_dims[@]}"; do printf "%${CW}s" "d=$d"; done
+    echo ""
+    echo "$DASHES"
+
+    for algo in "${algos[@]}"; do
+        printf "%-${NW}s" "$algo"
+        for d in "${sorted_dims[@]}"; do
+            ky="${algo}_${d}"
+            if [[ -n "${log2_max[$ky]}" ]]; then printf "%${CW}.1f" "${log2_max[$ky]}"
             else printf "%${CW}s" "-"; fi
         done
         echo ""
@@ -245,6 +265,19 @@ print_accuracy_block() {
     if [[ ${#simple_algos[@]} -gt 0 ]]; then
         echo "[Simple]"
         print_accuracy_block "${simple_algos[@]}"
+    fi
+
+    echo "$EQUALS"
+    echo "  Accuracy Comparison: log2(Rel. Max Error)"
+    echo "$EQUALS"
+    echo ""
+    if [[ ${#orig_algos[@]} -gt 0 ]]; then
+        echo "[Original]"
+        print_accuracy_max_block "${orig_algos[@]}"
+    fi
+    if [[ ${#simple_algos[@]} -gt 0 ]]; then
+        echo "[Simple]"
+        print_accuracy_max_block "${simple_algos[@]}"
     fi
 
 } > "$OUTPUT_FILE"

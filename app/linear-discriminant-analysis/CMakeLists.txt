@@ -47,11 +47,11 @@ target_compile_definitions(lda_encrypted
 target_compile_features(lda_encrypted PRIVATE cxx_std_17)
 
 # Benchmark: NewCol vs AR24 comparison (pure timing, no debug output)
-add_executable(benchmark_lda
+add_executable(lda_benchmark
     src/benchmark_lda.cpp
 )
 
-target_include_directories(benchmark_lda
+target_include_directories(lda_benchmark
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/src
@@ -62,7 +62,7 @@ target_include_directories(benchmark_lda
     ${OpenFHE_INCLUDE}/third-party/include
 )
 
-target_link_libraries(benchmark_lda
+target_link_libraries(lda_benchmark
     PRIVATE
     matrix_operations
     OPENFHEcore
@@ -70,11 +70,11 @@ target_link_libraries(benchmark_lda
     utils
 )
 
-target_compile_definitions(benchmark_lda
+target_compile_definitions(lda_benchmark
     PRIVATE
     DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/dataset"
     BENCHMARK_VERBOSE=0
 )
 
-target_compile_features(benchmark_lda PRIVATE cxx_std_17)
+target_compile_features(lda_benchmark PRIVATE cxx_std_17)
 

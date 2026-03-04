@@ -71,6 +71,7 @@ void runSquaringBenchmark(int numRuns = 1) {
             current = algo->eval_mult(current, current);
         }
         auto end = std::chrono::high_resolution_clock::now();
+        if (run == 0) std::cout << "  Final level: " << current->GetLevel() << std::endl;
 
         if (run == 0 && memMonitor) {
             memMetrics.peakMemoryGB = memMonitor->getPeakMemoryGB();
@@ -129,11 +130,23 @@ int main(int argc, char* argv[]) {
     std::cout << "OpenMP: Not enabled (single thread)" << std::endl;
     #endif
 
-    runSquaringBenchmark<4>(numRuns);
-    runSquaringBenchmark<8>(numRuns);
-    runSquaringBenchmark<16>(numRuns);
-    runSquaringBenchmark<32>(numRuns);
-    runSquaringBenchmark<64>(numRuns);
+    if (argc > 2) {
+        int d = std::atoi(argv[2]);
+        switch (d) {
+            case 4:  runSquaringBenchmark<4>(numRuns);  break;
+            case 8:  runSquaringBenchmark<8>(numRuns);  break;
+            case 16: runSquaringBenchmark<16>(numRuns); break;
+            case 32: runSquaringBenchmark<32>(numRuns); break;
+            case 64: runSquaringBenchmark<64>(numRuns); break;
+            default: std::cerr << "Unsupported dimension: " << d << std::endl; break;
+        }
+    } else {
+        runSquaringBenchmark<4>(numRuns);
+        runSquaringBenchmark<8>(numRuns);
+        runSquaringBenchmark<16>(numRuns);
+        runSquaringBenchmark<32>(numRuns);
+        runSquaringBenchmark<64>(numRuns);
+    }
 
     std::cout << "\n============================================" << std::endl;
     std::cout << "  Benchmark Complete" << std::endl;

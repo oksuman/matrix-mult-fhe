@@ -10,8 +10,7 @@ if [ -z "$OMP_NUM_THREADS" ]; then
 fi
 
 NUM_RUNS=${1:-1}
-# 실험 모드: "original" / "simple" / "all" (기본: all)
-BENCH_MODE=${2:-all}
+BENCH_MODE=${2:-simple}
 
 echo "Running matrix inversion benchmarks..."
 echo "Starting at $(date)"
@@ -103,21 +102,19 @@ if [ "$BENCH_MODE" = "simple" ] || [ "$BENCH_MODE" = "all" ]; then
     done
 
     for dim in 4 8 16 32 64; do
-        run_benchmark "benchmark_inversion_simple_ar24" $dim
-    done
-
-    for dim in 4 8 16 32 64; do
         run_benchmark "benchmark_inversion_simple_jkls18" $dim
     done
 
-    # RT22: d=4,8,16,32 만 지원
     for dim in 4 8 16 32; do
         run_benchmark "benchmark_inversion_simple_rt22" $dim
     done
 
-    # Naive: d=4,8 만 지원
     for dim in 4 8; do
         run_benchmark "benchmark_inversion_naive" $dim
+    done
+
+    for dim in 4 8 16 32 64; do
+        run_benchmark "benchmark_inversion_simple_ar24" $dim
     done
 fi
 

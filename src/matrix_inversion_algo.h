@@ -274,7 +274,9 @@ class MatrixInverse_AR24 : public MatrixInverseBase<d>,
 
         for (int i = 0; i < this->r - 1; i++) {
             if ((int)Y->GetLevel() >= this->depth - 3) {
+                Y->SetSlots(d * d);
                 Y = m_cc->EvalBootstrap(Y, 2, 18);
+                A_bar->SetSlots(d * d);
                 A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
             }
             auto pI_level = m_cc->MakeCKKSPackedPlaintext(vI, 1, A_bar->GetLevel(), nullptr, d * d);
@@ -292,7 +294,9 @@ class MatrixInverse_AR24 : public MatrixInverseBase<d>,
             A_bar = this->eval_mult(A_bar, A_bar_copy);
         }
         if ((int)Y->GetLevel() >= this->depth - 3) {
+            Y->SetSlots(d * d);
             Y = m_cc->EvalBootstrap(Y, 2, 18);
+            A_bar->SetSlots(d * d);
             A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
         }
         auto pI_final = m_cc->MakeCKKSPackedPlaintext(vI, 1, A_bar->GetLevel(), nullptr, d * d);
@@ -318,7 +322,6 @@ class MatrixInverse_AR24 : public MatrixInverseBase<d>,
         // Y0 = (1/d^2)*M^T (scaled transpose)
         auto Y = this->eval_transpose_scaled(M, scaleFactor);
 
-        // eval_mult(M, Y0) = (1/d^2)*M*M^T — AR24는 clean() 필요
         auto M_expanded = M->Clone();
         M_expanded->SetSlots(d * d * this->s);
         M_expanded = this->clean(M_expanded);
@@ -331,7 +334,9 @@ class MatrixInverse_AR24 : public MatrixInverseBase<d>,
 
         for (int i = 0; i < this->r - 1; i++) {
             if ((int)Y->GetLevel() >= this->depth - 3) {
+                Y->SetSlots(d * d);
                 Y = m_cc->EvalBootstrap(Y, 2, 18);
+                A_bar->SetSlots(d * d);
                 A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
             }
             auto pI_level = m_cc->MakeCKKSPackedPlaintext(vI, 1, A_bar->GetLevel(), nullptr, d * d);
@@ -349,7 +354,9 @@ class MatrixInverse_AR24 : public MatrixInverseBase<d>,
             A_bar = this->eval_mult(A_bar, A_bar_copy);
         }
         if ((int)Y->GetLevel() >= this->depth - 3) {
+            Y->SetSlots(d * d);
             Y = m_cc->EvalBootstrap(Y, 2, 18);
+            A_bar->SetSlots(d * d);
             A_bar = m_cc->EvalBootstrap(A_bar, 2, 18);
         }
         auto pI_final = m_cc->MakeCKKSPackedPlaintext(vI, 1, A_bar->GetLevel(), nullptr, d * d);

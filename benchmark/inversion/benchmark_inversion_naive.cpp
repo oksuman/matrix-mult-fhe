@@ -63,6 +63,7 @@ void runInversionBenchmark(int numRuns = 1) {
     double totalTime = 0.0;
     ErrorMetrics avgError;
     std::vector<double> times;
+    double sumRelFrob = 0.0, sumRelMax = 0.0, sumFrob = 0.0, sumMax = 0.0;
 
     for (int run = 0; run < numRuns; run++) {
         // Generate random invertible matrix with different seed per run
@@ -102,7 +103,10 @@ void runInversionBenchmark(int numRuns = 1) {
 
         ErrorMetrics error;
         error.compute(groundTruth, computed, d);
-        if (run == 0) avgError = error;
+        sumRelFrob += error.relativeFrobenius;
+        sumRelMax  += error.relativeMax;
+        sumFrob    += error.frobeniusNorm;
+        sumMax     += error.maxNorm;
 
         // Print final ciphertext level
         int finalLevel = result[0]->GetLevel();
@@ -111,6 +115,12 @@ void runInversionBenchmark(int numRuns = 1) {
                   << ", final_level=" << finalLevel << "/" << multDepth << std::endl;
     }
 
+    avgError.frobeniusNorm     = sumFrob    / numRuns;
+    avgError.maxNorm           = sumMax     / numRuns;
+    avgError.relativeFrobenius = sumRelFrob / numRuns;
+    avgError.relativeMax       = sumRelMax  / numRuns;
+    avgError.log2FrobError     = (avgError.relativeFrobenius > 1e-15) ? std::log2(avgError.relativeFrobenius) : -50.0;
+    avgError.log2MaxError      = (avgError.relativeMax > 1e-15) ? std::log2(avgError.relativeMax) : -50.0;
     double avgTime = totalTime / numRuns;
     double stdDev = 0.0;
     for (double t : times) stdDev += (t - avgTime) * (t - avgTime);

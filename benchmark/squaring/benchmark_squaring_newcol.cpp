@@ -88,6 +88,7 @@ void runSquaringBenchmark(int numRuns = 1) {
         }
 
         auto end = std::chrono::high_resolution_clock::now();
+        if (run == 0) std::cout << "  Final level: " << current->GetLevel() << std::endl;
         // ========== Time measurement END ==========
 
         // Record peak memory (first run only)
